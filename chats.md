@@ -1,0 +1,17 @@
+still not do any diffrenece or change
+still im not that happy with DOF yet and its not as good and capable as i like and there is some wierdness and non neccesserly complication in itm  do odeep think and rubrk and compelely refactor the lens and DOF and bloom effect in all parts of project and make sure ytou implement best optimized and capable 2with good and larrge range of boke and focus and out of focus capabilities and its implemented flawwlessly into our pipeline  of project and post fx
+
+
+all the dof and bloom from all part of sections and control panekll and project component
+and do proper planning to implement best optimized and capable 2 with good and larrge range of boke and focus and out of focus capabilities and its implemented flawwlessly into our pipeline of project and post fx with proper and functioning control panel with correct paramerters
+seprate all the visual and effect and post fx related compoennets and parameters and create dedicated seprate control pasnel for all of thos camera lens post fx and .....
+and one deddicatedseprate panel that is for rest of paramerters like rendering physics and such 
+and one panel that is for all soundreactivity related param
+
+screen is white wheni disable postfx it will show tthe particles fix issue
+and also  not that happy withpostfx and DOF yet and its not as good and capable as i like and there is some wierdness and non neccesserly complication in itm  do odeep think and rubrk and create a proper planning doc and compelely refactor the lens and DOF and bloom effect in all parts of project and make sure ytou implement best optimized and capable 2with good and larrge range of boke and focus and out of focus capabilities and its implemented flawwlessly into our pipeline  of project and post fx
+and there is duplications of some panels parameters for example there is camera dof in right panel that it shouldnt be ther all the post fx camera lens view and effects should be orgnized and show in its own panel on left refine and orgnize oanels and its sections and make all post fx and dof and bokeh effect and focus out of focus and such all works together and have unified and robust pipeline 
+
+
+still im not that happy with DOF yet and its not as good and capable as i like and there is some wierdness and non neccesserly complication in it and propebly  several conflicting pipelines that cuz issue   do odeep think and rubrik and create a planning doc and first clean and  remove all scripts and parts and anything related to the  camera bloom dof focos post ffx and everything related to them so we start fresh and clean base and then compelely refactorand redesign a postfx components and structure with best workflow and pipeline and structure that take care of all the camera lens focus bokeh dof and another component for other postfx and they all work flawlessly with eachother and ia proper TSL(node) base pipelineand proper control panel and their parameterds (just usefull and effective parameters)and all work properly best optimized and capable 2with good and larrge range of boke and focus and out of focus capabilities and its implemented flawwlessly into our pipeline  of project and post fx
+with its own control panel for all postfx lenss cameradof postfx ... panel
