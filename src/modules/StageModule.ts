@@ -6,56 +6,55 @@ import { Lights } from '../lights.js';
 import hdri from '../assets/autumn_field_puresky_1k.hdr';
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type { FrameContext, ResizeContext, StageContext } from '../core/types';
+import type { AuroraConfigState } from '../core/config';
 
 type StageBackground = BackgroundGeometry & {
   object: THREE.Object3D | null;
   glass: THREE.Mesh | null;
   glassCube: THREE.Mesh | null;
   floor: THREE.Mesh | null;
+  setGlassParams(params: {
+    ior?: number;
+    thickness?: number;
+    roughness?: number;
+    dispersion?: number;
+    attenuationDistance?: number;
+    attenuationColor?: { r: number; g: number; b: number };
+  }): void;
+  setShape(shape: string): void;
 };
 
-const DEFAULT_MARGIN = 0.98;
 const FOV_EPSILON = 0.001;
 
-function snapshotConfig(conf: Record<string, unknown>) {
+interface StageSnapshot {
+  camera: AuroraConfigState['stage']['camera'];
+  renderer: AuroraConfigState['stage']['renderer'];
+  environment: AuroraConfigState['stage']['environment'];
+  world: AuroraConfigState['stage']['world'];
+  glass: AuroraConfigState['stage']['glass'];
+}
+
+function snapshotStageConfig(config: AuroraConfigState): StageSnapshot {
   return {
-    camera: {
-      fov: conf.fov as number | undefined,
-      near: conf.cameraNear as number | undefined,
-      far: conf.cameraFar as number | undefined,
-    },
-    renderer: {
-      exposure: conf.exposure as number | undefined,
-      shadowEnabled: true,
-      shadowType: (conf.shadowMapType as number | undefined) ?? null,
-    },
-    environment: {
-      intensity: conf.envIntensity as number | undefined,
-      backgroundRotationY: conf.bgRotY as number | undefined,
-      environmentRotationY: conf.envRotY as number | undefined,
-    },
-    worldFit: {
-      auto: Boolean(conf.autoWorldFit),
-      mode: (conf.fitMode as string | undefined) ?? 'cover',
-      margin: (conf.fitMargin as number | undefined) ?? DEFAULT_MARGIN,
-      scale: (conf.worldScale as number | undefined) ?? 1,
-      boundariesEnabled: Boolean(conf.boundariesEnabled),
-    },
+    camera: config.stage.camera,
+    renderer: config.stage.renderer,
+    environment: config.stage.environment,
+    world: config.stage.world,
+    glass: config.stage.glass,
   };
 }
 
-function applyCameraParams(camera: THREE.PerspectiveCamera, config: ReturnType<typeof snapshotConfig>['camera']) {
-  if (!config) return;
+function applyCameraParams(camera: THREE.PerspectiveCamera, config: StageSnapshot['camera']) {
   let dirty = false;
-  if (typeof config.fov === 'number' && Math.abs(camera.fov - config.fov) > FOV_EPSILON) {
+  if (Math.abs(camera.fov - config.fov) > FOV_EPSILON) {
     camera.fov = config.fov;
     dirty = true;
   }
-  if (typeof config.near === 'number' && Math.abs(camera.near - config.near) > 1e-5) {
+  if (Math.abs(camera.near - config.near) > 1e-5) {
     camera.near = config.near;
     dirty = true;
   }
-  if (typeof config.far === 'number' && Math.abs(camera.far - config.far) > 1e-5) {
+  if (Math.abs(camera.far - config.far) > 1e-5) {
     camera.far = config.far;
     dirty = true;
   }
@@ -64,37 +63,53 @@ function applyCameraParams(camera: THREE.PerspectiveCamera, config: ReturnType<t
   }
 }
 
-function applyRenderer(renderer: WebGPURenderer, config: ReturnType<typeof snapshotConfig>['renderer']) {
-  if (!config) return;
-  if (typeof config.exposure === 'number') {
-    renderer.toneMappingExposure = config.exposure;
+function applyRenderer(renderer: WebGPURenderer, config: StageSnapshot['renderer']) {
+  renderer.toneMappingExposure = config.exposure;
+  const toneMapping = config.toneMapping ?? 'aces';
+  const toneLookup: Record<'aces' | 'filmic' | 'linear', THREE.ToneMapping> = {
+    aces: THREE.ACESFilmicToneMapping,
+    filmic: THREE.ReinhardToneMapping,
+    linear: THREE.LinearToneMapping,
+  };
+  const desiredTone = toneLookup[toneMapping] ?? THREE.ACESFilmicToneMapping;
+  if (renderer.toneMapping !== desiredTone) {
+    renderer.toneMapping = desiredTone;
   }
   if (renderer.shadowMap) {
-    renderer.shadowMap.enabled = config.shadowEnabled !== false;
-    const type = typeof config.shadowType === 'number' ? config.shadowType : THREE.PCFSoftShadowMap;
-    renderer.shadowMap.type = type as THREE.ShadowMapType;
+    renderer.shadowMap.enabled = config.shadows.enabled;
+    const shadowLookup = {
+      pcfsoft: THREE.PCFSoftShadowMap,
+      pcss: (THREE as unknown as { PCSSShadowMap?: THREE.ShadowMapType }).PCSSShadowMap ?? THREE.PCFSoftShadowMap,
+      basic: THREE.BasicShadowMap,
+    } as const;
+    renderer.shadowMap.type = shadowLookup[config.shadows.type] ?? THREE.PCFSoftShadowMap;
   }
 }
 
-function applyEnvironment(scene: THREE.Scene, config: ReturnType<typeof snapshotConfig>['environment']) {
-  if (!config) return;
-  scene.environmentIntensity = config.intensity ?? 1;
-  scene.backgroundRotation = new THREE.Euler(0, config.backgroundRotationY ?? 0, 0);
-  scene.environmentRotation = new THREE.Euler(0, config.environmentRotationY ?? 0, 0);
+function applyEnvironment(scene: THREE.Scene, config: StageSnapshot['environment']) {
+  scene.environmentIntensity = config.intensity;
+  scene.backgroundRotation = new THREE.Euler(0, config.backgroundRotationY, 0);
+  scene.environmentRotation = new THREE.Euler(0, config.environmentRotationY, 0);
 }
 
-function computeWorldFit(camera: THREE.PerspectiveCamera, controls: OrbitControls | undefined, fit: ReturnType<typeof snapshotConfig>['worldFit']) {
-  if (!fit?.auto || fit.boundariesEnabled || !camera || !controls) return null;
+function computeWorldFit(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls | null,
+  world: StageSnapshot['world'],
+) {
+  if (!world.autoFit || world.boundariesEnabled || !camera || !controls) return null;
   const distance = camera.position.distanceTo(controls.target);
   const halfHeight = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * distance;
   const visibleHeight = halfHeight * 2;
   const visibleWidth = visibleHeight * camera.aspect;
-  const margin = typeof fit.margin === 'number' ? fit.margin : DEFAULT_MARGIN;
-  const contain = Math.min(visibleWidth, visibleHeight) * margin;
-  const cover = Math.max(visibleWidth, visibleHeight) * margin;
-  const target = fit.mode === 'cover' ? cover : contain;
-  const current = typeof fit.scale === 'number' ? fit.scale : 1;
-  return current * 0.82 + target * 0.18;
+  const contain = Math.min(visibleWidth, visibleHeight) * world.margin;
+  const cover = Math.max(visibleWidth, visibleHeight) * world.margin;
+  const target = world.mode === 'cover' ? cover : contain;
+  return world.scale * 0.82 + target * 0.18;
+}
+
+function toColorTuple(color: AuroraConfigState['stage']['glass']['attenuationColor']) {
+  return { r: color[0], g: color[1], b: color[2] };
 }
 
 export default class StageModule implements FeatureModule {
@@ -108,18 +123,18 @@ export default class StageModule implements FeatureModule {
   private environmentTexture: THREE.DataTexture | null = null;
   private glassSignature: string | null = null;
   private boundarySignature: string | null = null;
-  private boundaryUploadRestore: (() => void) | null = null;
 
   async init(context: ModuleContext, progress?: (value: number) => void): Promise<void> {
     const { renderer, config, assets, registry, events } = context;
     const state = config.state;
+    const stageConfig = state.stage;
     progress?.(0.05);
 
     this.camera = new THREE.PerspectiveCamera(
-      (state.fov as number | undefined) ?? 60,
+      stageConfig.camera.fov,
       window.innerWidth / window.innerHeight,
-      (state.cameraNear as number | undefined) ?? 0.01,
-      (state.cameraFar as number | undefined) ?? 10,
+      stageConfig.camera.near,
+      stageConfig.camera.far,
     );
     this.camera.position.set(0, 0, 2);
     this.camera.updateProjectionMatrix();
@@ -155,17 +170,20 @@ export default class StageModule implements FeatureModule {
     this.lights = new Lights();
     this.scene.add(this.lights.object);
 
-    this.applySnapshot(context);
-    this.registerBoundaryUpload(context);
+    this.applySnapshot(context, snapshotStageConfig(state));
 
     const stageContext: StageContext = {
       camera: this.camera,
       scene: this.scene,
       controls: this.controls ?? undefined,
+      requestBoundaryImport: () => this.openBoundaryImport(context),
     };
     registry.provide('stage', stageContext);
     events.emit('stage.ready', stageContext);
-    events.emit('audio.environment-base', { bg: state.bgRotY ?? 0, env: state.envRotY ?? 0 });
+    events.emit('audio.environment-base', {
+      bg: stageConfig.environment.backgroundRotationY,
+      env: stageConfig.environment.environmentRotationY,
+    });
 
     progress?.(0.2);
   }
@@ -174,20 +192,27 @@ export default class StageModule implements FeatureModule {
     if (!this.camera || !this.scene) return;
     const { config, events } = context;
     const state = config.state;
-    const snapshot = snapshotConfig(state);
+    const snapshot = snapshotStageConfig(state);
     this.applySnapshot(context, snapshot);
 
     this.controls?.update(frame.delta);
     this.lights?.update?.(frame.elapsed);
 
-    const newScale = computeWorldFit(this.camera, this.controls ?? undefined, snapshot.worldFit);
+    const newScale = computeWorldFit(this.camera, this.controls, snapshot.world);
     if (typeof newScale === 'number' && Number.isFinite(newScale)) {
-      config.batch(() => {
-        state.worldScale = newScale;
-      });
+      const stageState = config.state.stage;
+      config.patch({
+        stage: {
+          ...stageState,
+          world: { ...stageState.world, scale: newScale },
+        },
+      } as Partial<AuroraConfigState>);
     }
 
-    events.emit('audio.environment-base', { bg: state.bgRotY ?? 0, env: state.envRotY ?? 0 });
+    events.emit('audio.environment-base', {
+      bg: snapshot.environment.backgroundRotationY,
+      env: snapshot.environment.environmentRotationY,
+    });
   }
 
   resize(size: ResizeContext): void {
@@ -204,7 +229,6 @@ export default class StageModule implements FeatureModule {
     if (this.environmentTexture) {
       this.environmentTexture.dispose();
     }
-    this.boundaryUploadRestore?.();
     context.registry.revoke('stage.background');
     context.registry.revoke('stage.environmentTexture');
     context.registry.revoke('stage');
@@ -216,30 +240,26 @@ export default class StageModule implements FeatureModule {
     this.environmentTexture = null;
     this.glassSignature = null;
     this.boundarySignature = null;
-    this.boundaryUploadRestore = null;
   }
 
-  private applySnapshot(context: ModuleContext, snapshot?: ReturnType<typeof snapshotConfig>): void {
+  private applySnapshot(context: ModuleContext, snapshot: StageSnapshot): void {
     if (!this.camera || !this.scene) return;
-    const { renderer, config } = context;
-    const data = snapshot ?? snapshotConfig(config.state);
-    applyCameraParams(this.camera, data.camera);
-    applyEnvironment(this.scene, data.environment);
-    applyRenderer(renderer, data.renderer);
-    this.applyGlass(context);
-    this.applyBoundary(config.state);
+    applyCameraParams(this.camera, snapshot.camera);
+    applyEnvironment(this.scene, snapshot.environment);
+    applyRenderer(context.renderer, snapshot.renderer);
+    this.applyGlass(snapshot.glass);
+    this.applyBoundary(snapshot);
   }
 
-  private applyGlass(context: ModuleContext): void {
+  private applyGlass(glassConfig: StageSnapshot['glass']): void {
     if (!this.background?.glass) return;
-    const state = context.config.state;
     const params = {
-      ior: state.glassIor,
-      thickness: state.glassThickness,
-      roughness: state.glassRoughness,
-      dispersion: state.glassDispersion,
-      attenuationDistance: state.glassAttenuationDistance,
-      attenuationColor: state.glassAttenuationColor,
+      ior: glassConfig.ior,
+      thickness: glassConfig.thickness,
+      roughness: glassConfig.roughness,
+      dispersion: glassConfig.dispersion,
+      attenuationDistance: glassConfig.attenuationDistance,
+      attenuationColor: toColorTuple(glassConfig.attenuationColor),
     };
     const signature = JSON.stringify(params);
     if (signature === this.glassSignature) return;
@@ -247,13 +267,13 @@ export default class StageModule implements FeatureModule {
     this.background.setGlassParams(params);
   }
 
-  private applyBoundary(state: Record<string, unknown>): void {
+  private applyBoundary(snapshot: StageSnapshot): void {
     if (!this.background) return;
     const stageObject = this.background.object as THREE.Object3D | null;
     if (!stageObject) return;
     const params = {
-      visible: Boolean(state.boundariesEnabled),
-      shape: (state.boundaryShape as string | undefined) ?? 'dodeca',
+      visible: snapshot.world.boundariesEnabled,
+      shape: snapshot.glass.shape,
     };
     const signature = JSON.stringify(params);
     if (signature === this.boundarySignature) return;
@@ -262,47 +282,47 @@ export default class StageModule implements FeatureModule {
     this.background.setShape(params.shape);
   }
 
-  private registerBoundaryUpload(context: ModuleContext): void {
-    const state = context.config.state;
-    if (typeof state.registerBoundaryUpload !== 'function') return;
+  private async openBoundaryImport(context: ModuleContext): Promise<void> {
     if (typeof document === 'undefined') return;
-
-    const rawState = state as unknown as Record<string, unknown>;
-    const previous = rawState.__onBoundaryUpload as (() => void) | null | undefined;
-    state.registerBoundaryUpload(async () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.obj,.glb,.gltf,.fbx,.ply,.stl';
-      input.onchange = async () => {
-        const file = input.files?.[0];
-        if (!file || !this.background) return;
-        try {
-          if (!this.background?.glass || !this.background.object) return;
-          const glass = this.background.glass as THREE.Mesh;
-          const mesh = await context.assets.loadMeshFromFile(file, glass.material);
-          if (!mesh) return;
-          if (glass.parent) {
-            glass.parent.remove(glass);
-          }
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          this.background.glass = mesh as unknown as StageBackground['glass'];
-          const stageObject = this.background.object as THREE.Object3D | null;
-          stageObject?.add(mesh);
-          this.glassSignature = null;
-          this.boundarySignature = null;
-          context.config.batch(() => {
-            state.boundaryShape = 'sphere';
-          });
-          this.applySnapshot(context);
-        } catch (error) {
-          console.error(error);
-        }
-      };
-      input.click();
-    });
-    this.boundaryUploadRestore = () => {
-      rawState.__onBoundaryUpload = previous ?? null;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.obj,.glb,.gltf,.fbx,.ply,.stl';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      await this.loadBoundaryFromFile(file, context);
     };
+    input.click();
+  }
+
+  private async loadBoundaryFromFile(file: File, context: ModuleContext): Promise<void> {
+    if (!this.background?.glass || !this.background.object) return;
+    try {
+      const glass = this.background.glass as THREE.Mesh | null;
+      const stageObject = this.background.object as THREE.Object3D | null;
+      if (!glass || !stageObject) return;
+      const mesh = await context.assets.loadMeshFromFile(file, glass.material);
+      if (!mesh) return;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      if (glass.parent) {
+        glass.parent.remove(glass);
+      }
+      this.background.glass = mesh as unknown as StageBackground['glass'];
+      stageObject.add(mesh);
+      this.glassSignature = null;
+      this.boundarySignature = null;
+      const stageState = context.config.state.stage;
+      context.config.patch({
+        stage: {
+          ...stageState,
+          glass: { ...stageState.glass, shape: 'sphere' },
+          world: { ...stageState.world, boundariesEnabled: true },
+        },
+      } as Partial<AuroraConfigState>);
+      this.applySnapshot(context, snapshotStageConfig(context.config.state));
+    } catch (error) {
+      console.error(error);
+    }
   }
 }
