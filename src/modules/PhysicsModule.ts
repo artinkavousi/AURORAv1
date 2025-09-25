@@ -46,9 +46,8 @@ export default class PhysicsModule implements FeatureModule {
     const surfaceObject = surface.object as THREE.Object3D | null;
     const pointsObject = points.object as THREE.Object3D | null;
     const glyphsObject = glyphs.object as THREE.Object3D | null;
-    const state = context.config.state;
-
-    const mode = (state.renderMode as string | undefined) ?? 'surface';
+    const simulation = context.config.state.simulation;
+    const mode = simulation.render.mode;
     if (surfaceObject) surfaceObject.visible = mode === 'surface';
     if (pointsObject) pointsObject.visible = mode === 'points';
     if (glyphsObject) glyphsObject.visible = mode === 'glyphs';

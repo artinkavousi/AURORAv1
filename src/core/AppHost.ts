@@ -1,13 +1,11 @@
 import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
 import { Info } from '../info.js';
-import { conf } from '../conf.js';
 import { createConfigStore, type AuroraConfigStore } from './ConfigStore';
 import { EventHub } from './EventHub';
 import { AssetPipeline } from './AssetPipeline';
 import { Diagnostics } from './Diagnostics';
 import { ModuleRegistry, type FeatureModule, type ModuleContext } from './ModuleRegistry';
 import type {
-  AuroraConfig,
   AuroraEvents,
   FrameContext,
   ResizeContext,
@@ -16,6 +14,7 @@ import type {
   AudioRuntimeContext,
 } from './types';
 import { toBoolean } from './valueAccess';
+import { createAuroraConfig } from './config';
 import StageModule from '../modules/StageModule';
 import MaterialModule from '../modules/MaterialModule';
 import PhysicsModule from '../modules/PhysicsModule';
@@ -40,7 +39,7 @@ export class AppHost {
   private fpsSample = 0;
 
   constructor(private readonly renderer: WebGPURenderer, modules?: FeatureModule[]) {
-    this.configStore = createConfigStore(conf as unknown as AuroraConfig);
+    this.configStore = createConfigStore(createAuroraConfig());
     this.events = new EventHub<AuroraEvents>();
     this.assets = new AssetPipeline();
     this.diagnostics = new Diagnostics(this.events);
@@ -69,9 +68,6 @@ export class AppHost {
 
   async init(progress?: ProgressCallback): Promise<void> {
     this.info = new Info();
-    const config = this.configStore.state;
-    config.init?.();
-
     this.teardown.push(
       this.configStore.subscribe(() => {
         this.infoDirty = true;
@@ -111,16 +107,12 @@ export class AppHost {
 
   async update(delta: number, elapsed: number): Promise<void> {
     const frame: FrameContext = { delta, elapsed };
-    const config = this.configStore.state;
-    config.begin?.();
-
     for (const module of this.modules) {
       await module.update?.(frame, this.context);
     }
 
     this.diagnostics.update(frame, this.configStore);
     this.refreshInfo(frame.elapsed);
-    config.end?.();
   }
 
   dispose(): void {
