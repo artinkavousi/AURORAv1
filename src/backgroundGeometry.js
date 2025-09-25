@@ -1,4 +1,5 @@
-import * as THREE from "three/webgpu";
+import * as THREE from "three";
+import { MeshPhysicalNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
 import { Fn, texture, uv, positionWorld, vec3, float } from "three/tsl";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -30,7 +31,7 @@ class BackgroundGeometry {
 
     async init() {
         // Shared glass material
-        const glassMat = new THREE.MeshPhysicalNodeMaterial({
+        const glassMat = new MeshPhysicalNodeMaterial({
             roughness: 0.02,
             transmission: 1.0,
             thickness: 0.3,
@@ -75,7 +76,7 @@ class BackgroundGeometry {
         const map = await loadTexture(colorMapFile);
         const roughnessMap = await loadTexture(roughnessMapFile);
 
-        const floorMat = new THREE.MeshStandardNodeMaterial({
+        const floorMat = new MeshStandardNodeMaterial({
             roughness: 0.9,
             metalness:0.0,
             normalScale: new THREE.Vector3(1.0, 1.0),
@@ -105,7 +106,7 @@ class BackgroundGeometry {
 
     setGlassParams({ ior, thickness, roughness, dispersion, attenuationDistance, attenuationColor }) {
         if (!this.glass) return;
-        const mat = /** @type {THREE.MeshPhysicalNodeMaterial} */ (this.glass.material);
+        const mat = /** @type {MeshPhysicalNodeMaterial} */ (this.glass.material);
         if (mat) {
             if (typeof ior === 'number') mat.ior = ior;
             if (typeof thickness === 'number') mat.thickness = thickness;

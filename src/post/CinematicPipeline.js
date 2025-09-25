@@ -1,4 +1,5 @@
-import * as THREE from "three/webgpu";
+import * as THREE from "three";
+import { PostProcessing } from 'three/webgpu';
 import {
   float,
   Fn,
@@ -254,7 +255,7 @@ class CinematicPipeline {
     this._compositeTexture = convertToTexture(compositeNode);
 
     // Postprocessing
-    this.postProcessing = new THREE.PostProcessing(this.renderer);
+    this.postProcessing = new PostProcessing(this.renderer);
     this.postProcessing.outputColorTransform = false;
     this.postProcessing.outputNode = this._compositeTexture;
 
