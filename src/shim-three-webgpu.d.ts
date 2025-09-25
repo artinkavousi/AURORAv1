@@ -1,8 +1,3 @@
-declare module 'three/webgpu' {
-  export * from 'three';
-  export { WebGPURenderer } from 'three/examples/jsm/renderers/webgpu/WebGPURenderer.js';
-}
-
 declare module 'three/examples/jsm/controls/OrbitControls.js' {
   import type * as THREE from 'three';
   export class OrbitControls extends THREE.EventDispatcher {
@@ -70,9 +65,13 @@ declare module 'three/examples/jsm/loaders/STLLoader.js' {
   }
 }
 
-declare module 'three/examples/jsm/renderers/webgpu/WebGPURenderer.js' {
-  import { WebGLRenderer } from 'three';
-  export class WebGPURenderer extends WebGLRenderer {
+declare module 'three/src/renderers/webgpu/WebGPURenderer.js' {
+  import { WebGLRenderer, WebGLRendererParameters } from 'three';
+  export interface WebGPURendererParameters extends WebGLRendererParameters {
+    forceWebGL?: boolean;
+  }
+  export default class WebGPURenderer extends WebGLRenderer {
+    constructor(parameters?: WebGPURendererParameters);
     backend: { isWebGPUBackend?: boolean };
     init(): Promise<void>;
   }

@@ -1,5 +1,5 @@
-import * as THREE from 'three/webgpu';
-import type { WebGPURenderer } from 'three/examples/jsm/renderers/webgpu/WebGPURenderer.js';
+import * as THREE from 'three';
+import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import BackgroundGeometry from '../backgroundGeometry.js';
 import { Lights } from '../lights.js';

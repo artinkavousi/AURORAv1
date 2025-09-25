@@ -1,4 +1,4 @@
-import type * as THREE from 'three/webgpu';
+import type * as THREE from 'three';
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type BackgroundGeometry from '../backgroundGeometry.js';
 import type ParticleRenderer from '../mls-mpm/particleRenderer.js';

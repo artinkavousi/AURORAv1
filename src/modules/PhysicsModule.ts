@@ -1,4 +1,4 @@
-import type * as THREE from 'three/webgpu';
+import type * as THREE from 'three';
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type { FrameContext, StageContext, SimulationContext } from '../core/types';
 import MlsMpmSimulator from '../mls-mpm/mlsMpmSimulator.js';

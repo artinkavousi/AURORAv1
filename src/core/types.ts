@@ -1,4 +1,4 @@
-import type * as THREE from 'three/webgpu';
+import type * as THREE from 'three';
 import type { conf as legacyConf } from '../conf.js';
 
 export type AuroraConfig = (typeof legacyConf) & Record<string, unknown>;

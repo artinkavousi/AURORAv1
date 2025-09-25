@@ -1,4 +1,5 @@
-import * as THREE from "three/webgpu";
+import * as THREE from "three";
+import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { Fn, attribute, instanceIndex, mat3, normalize, vec3, varying, uniform, mrt, float } from "three/tsl";
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { conf } from "../conf";
@@ -17,7 +18,7 @@ class GlyphRenderer {
         this.geometry = new THREE.InstancedBufferGeometry().copy(base);
         this.geometry.instanceCount = this.mlsMpmSim.numParticles;
 
-        this.material = new THREE.MeshStandardNodeMaterial({
+        this.material = new MeshStandardNodeMaterial({
             metalness: 0.2,
             roughness: 0.25,
         });

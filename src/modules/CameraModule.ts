@@ -1,4 +1,4 @@
-import * as THREE from 'three/webgpu';
+import * as THREE from 'three';
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type { FrameContext, ResizeContext, StageContext, SimulationContext, PostPipelineContext } from '../core/types';
 import { getNumber, toBoolean, toNumber, toStringOption } from '../core/valueAccess';

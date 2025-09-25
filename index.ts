@@ -1,4 +1,5 @@
-import * as THREE from 'three/webgpu';
+import * as THREE from 'three';
+import WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
 import { AppHost } from './src/core/AppHost';
 
 THREE.ColorManagement.enabled = true;
@@ -13,7 +14,7 @@ const updateLoadingProgressBar = async (fraction: number, delay = 0) => {
 };
 
 function createRenderer() {
-  const renderer = new THREE.WebGPURenderer({});
+  const renderer = new WebGPURenderer();
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;

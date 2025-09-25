@@ -1,4 +1,5 @@
-import * as THREE from "three/webgpu";
+import * as THREE from "three";
+import { PointsNodeMaterial } from 'three/webgpu';
 import {Fn, vec3, instanceIndex, float} from "three/tsl";
 import {conf} from "../conf";
 
@@ -11,7 +12,7 @@ class PointRenderer {
 
         this.geometry = new THREE.InstancedBufferGeometry();
         const positionBuffer = new THREE.BufferAttribute(new Float32Array(3), 3, false);
-        const material = new THREE.PointsNodeMaterial();
+        const material = new PointsNodeMaterial();
         this.geometry.setAttribute('position', positionBuffer);
         this.object = new THREE.Points(this.geometry, material);
         this.uniforms = { zScale: { value: 0.4 } };

@@ -1,4 +1,4 @@
-import type { WebGPURenderer } from 'three/examples/jsm/renderers/webgpu/WebGPURenderer.js';
+import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
 import type { ConfigStore } from './ConfigStore';
 import type { AuroraConfig, AuroraEvents, FrameContext, ResizeContext } from './types';
 import type { EventHub } from './EventHub';
