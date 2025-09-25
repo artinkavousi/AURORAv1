@@ -1,4 +1,5 @@
-import * as THREE from "three/webgpu";
+import * as THREE from "three";
+import { MeshStandardNodeMaterial } from 'three/webgpu';
 import {Fn, attribute, triNoise3D, time, vec3, vec4, float, varying,instanceIndex,mix,normalize,cross,mat3,normalLocal,transformNormalToView,mx_hsvtorgb,mrt,uniform} from "three/tsl";
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {conf} from "../conf";
@@ -119,7 +120,7 @@ class ParticleRenderer {
         this.geometry.setDrawRange(0, this.defaultIndexCount);
         this.geometry.instanceCount = this.mlsMpmSim.numParticles;
 
-        this.material = new THREE.MeshStandardNodeMaterial({
+        this.material = new MeshStandardNodeMaterial({
             metalness: 0.900,
             roughness: 0.50,
             //iridescence: 1.0,

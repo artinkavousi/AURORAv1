@@ -51,10 +51,19 @@ export default class AudioPanel {
     this._matrixPage = null;
     this._matrixModel = null;
     this._matrixHandles = [];
+    this.container = null;
+    this._header = null;
+    this._dragging = false;
+    this._dragStart = { x: 0, y: 0 };
+    this._dragOrigin = { x: 0, y: 0 };
+    this._onHeaderDown = null;
+    this._onHeaderMove = null;
+    this._onHeaderUp = null;
   }
 
   init(position = 'bottom-right') {
     const container = document.createElement('div');
+    this.container = container;
     container.style.position = 'absolute';
     if (position.includes('bottom')) container.style.bottom = '16px'; else container.style.top = '16px';
     if (position.includes('right')) container.style.right = '16px'; else container.style.left = '16px';
@@ -72,6 +81,7 @@ export default class AudioPanel {
 
     // Narrow draggable header
     const header = document.createElement('div');
+    this._header = header;
     header.textContent = 'audio';
     header.style.position = 'absolute';
     header.style.top = '-10px';
@@ -87,28 +97,31 @@ export default class AudioPanel {
     header.style.userSelect = 'none';
     container.appendChild(header);
 
-    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
-    const onDown = (e) => {
-      dragging = true; sx = e.clientX; sy = e.clientY;
-      const r = container.getBoundingClientRect();
-      ox = r.left; oy = r.top;
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+    this._onHeaderMove = (e) => {
+      if (!this._dragging || !this.container) return;
+      const dx = e.clientX - this._dragStart.x;
+      const dy = e.clientY - this._dragStart.y;
+      this.container.style.left = Math.max(0, Math.min(window.innerWidth - 40, this._dragOrigin.x + dx)) + 'px';
+      this.container.style.top = Math.max(0, Math.min(window.innerHeight - 40, this._dragOrigin.y + dy)) + 'px';
+      this.container.style.right = '';
+      this.container.style.position = 'absolute';
     };
-    const onMove = (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - sx, dy = e.clientY - sy;
-      container.style.left = Math.max(0, Math.min(window.innerWidth - 40, ox + dx)) + 'px';
-      container.style.top = Math.max(0, Math.min(window.innerHeight - 40, oy + dy)) + 'px';
-      container.style.right = '';
-      container.style.position = 'absolute';
+    this._onHeaderUp = () => {
+      this._dragging = false;
+      document.removeEventListener('mousemove', this._onHeaderMove);
+      document.removeEventListener('mouseup', this._onHeaderUp);
     };
-    const onUp = () => {
-      dragging = false;
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+    this._onHeaderDown = (e) => {
+      this._dragging = true;
+      this._dragStart.x = e.clientX;
+      this._dragStart.y = e.clientY;
+      const rect = container.getBoundingClientRect();
+      this._dragOrigin.x = rect.left;
+      this._dragOrigin.y = rect.top;
+      document.addEventListener('mousemove', this._onHeaderMove);
+      document.addEventListener('mouseup', this._onHeaderUp);
     };
-    header.addEventListener('mousedown', onDown);
+    header.addEventListener('mousedown', this._onHeaderDown);
 
     const gui = new Pane({ container });
     gui.registerPlugin(EssentialsPlugin);
@@ -136,6 +149,23 @@ export default class AudioPanel {
     this.router?.setReactivity?.(this.conf.audioReactivity ?? 1.0);
 
     try { this.applyStyle('Groove'); } catch (_) { /* noop */ }
+  }
+
+  dispose() {
+    if (this._header && this._onHeaderDown) {
+      this._header.removeEventListener('mousedown', this._onHeaderDown);
+    }
+    document.removeEventListener('mousemove', this._onHeaderMove);
+    document.removeEventListener('mouseup', this._onHeaderUp);
+    this.gui?.dispose?.();
+    if (this.container?.parentElement) {
+      this.container.parentElement.removeChild(this.container);
+    }
+    this.gui = null;
+    this.container = null;
+    this._header = null;
+    this._onHeaderDown = this._onHeaderMove = this._onHeaderUp = null;
+    this._dragging = false;
   }
 
   _buildInputTab(page) {

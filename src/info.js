@@ -10,6 +10,7 @@ export class Info {
         container.style.bottom = '8px';
         container.style.maxWidth = '512px';
         container.style.width = 'calc(100% - 16px)';
+        this.container = container;
 
         const pane = new Pane({ container })
         pane.registerPlugin(InfodumpPlugin);
@@ -44,5 +45,11 @@ export class Info {
     setText(c) {
         this.textBlade.controller.view.element.innerHTML = '<div class="tp-induv_t"><p>' + c + '</p></div>';
         this.pane.refresh();
+    }
+    dispose() {
+        this.pane?.dispose?.();
+        if (this.container?.parentElement) {
+            this.container.parentElement.removeChild(this.container);
+        }
     }
 }
