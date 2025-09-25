@@ -1,7 +1,7 @@
 import type * as THREE from 'three';
-import type { conf as legacyConf } from '../conf.js';
+import type { AuroraConfigState } from './config';
 
-export type AuroraConfig = (typeof legacyConf) & Record<string, unknown>;
+export type AuroraConfig = AuroraConfigState & Record<string, unknown>;
 
 export type EnvironmentBase = {
   bg: number;
@@ -22,6 +22,7 @@ export interface StageContext {
   camera: THREE.PerspectiveCamera;
   scene: THREE.Scene;
   controls?: import('three/examples/jsm/controls/OrbitControls.js').OrbitControls;
+  requestBoundaryImport?: () => Promise<void> | void;
 }
 
 export interface SimulationContext {

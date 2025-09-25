@@ -2,6 +2,7 @@ import type { AuroraConfigStore } from './ConfigStore';
 import type { FrameContext } from './types';
 import type { EventHub } from './EventHub';
 import type { AuroraEvents } from './types';
+import type { AuroraConfigState } from './config';
 
 export class Diagnostics {
   private fps = 60;
@@ -27,8 +28,9 @@ export class Diagnostics {
       this.events.emit('diagnostics.fps', { fps: this.fps });
     }
 
-    const state = config.state;
-    if (!state.autoPerf) {
+    const simulation = config.state.simulation;
+    const perf = simulation.performance;
+    if (!perf.auto) {
       return;
     }
 
@@ -37,29 +39,35 @@ export class Diagnostics {
       return;
     }
 
-    const minFps = state.perfMinFps ?? 50;
-    const maxFps = state.perfMaxFps ?? 58;
-    const step = state.perfStep ?? 4096;
+    const minFps = perf.minFps;
+    const maxFps = perf.maxFps;
+    const step = perf.step;
     const minParticles = 4096;
+    const domain = simulation.domain;
+    const current = domain.targetParticles;
+    const maxParticles = domain.maxParticles;
 
-    if (this.fps < minFps && state.particles > minParticles) {
-      const next = Math.max(minParticles, state.particles - step);
-      config.batch(() => {
-        state.particles = next;
-        state.updateParams?.();
-        const gui = state.gui as unknown as { refresh?: () => void } | undefined;
-        gui?.refresh?.();
-      });
+    if (this.fps < minFps && current > minParticles) {
+      const next = Math.max(minParticles, current - step);
+      this.applyParticleTarget(config, simulation, next);
       this.lastAdjust = nowSeconds;
-    } else if (this.fps > maxFps && state.particles + step <= (state.maxParticles ?? state.particles)) {
-      const next = Math.min(state.maxParticles ?? Number.MAX_SAFE_INTEGER, state.particles + step);
-      config.batch(() => {
-        state.particles = next;
-        state.updateParams?.();
-        const gui = state.gui as unknown as { refresh?: () => void } | undefined;
-        gui?.refresh?.();
-      });
+    } else if (this.fps > maxFps && current + step <= maxParticles) {
+      const next = Math.min(maxParticles, current + step);
+      this.applyParticleTarget(config, simulation, next);
       this.lastAdjust = nowSeconds;
     }
+  }
+
+  private applyParticleTarget(
+    store: AuroraConfigStore,
+    simulation: AuroraConfigState['simulation'],
+    value: number,
+  ): void {
+    store.patch({
+      simulation: {
+        ...simulation,
+        domain: { ...simulation.domain, targetParticles: value },
+      },
+    } as Partial<AuroraConfigState>);
   }
 }
