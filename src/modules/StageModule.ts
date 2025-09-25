@@ -65,12 +65,12 @@ function applyCameraParams(camera: THREE.PerspectiveCamera, config: StageSnapsho
 
 function applyRenderer(renderer: WebGPURenderer, config: StageSnapshot['renderer']) {
   renderer.toneMappingExposure = config.exposure;
-  const toneMapping = config.toneMapping ?? 'aces';
   const toneLookup: Record<'aces' | 'filmic' | 'linear', THREE.ToneMapping> = {
     aces: THREE.ACESFilmicToneMapping,
     filmic: THREE.ReinhardToneMapping,
     linear: THREE.LinearToneMapping,
   };
+  const toneMapping = (config.toneMapping ?? 'aces') as keyof typeof toneLookup;
   const desiredTone = toneLookup[toneMapping] ?? THREE.ACESFilmicToneMapping;
   if (renderer.toneMapping !== desiredTone) {
     renderer.toneMapping = desiredTone;
@@ -82,7 +82,8 @@ function applyRenderer(renderer: WebGPURenderer, config: StageSnapshot['renderer
       pcss: (THREE as unknown as { PCSSShadowMap?: THREE.ShadowMapType }).PCSSShadowMap ?? THREE.PCFSoftShadowMap,
       basic: THREE.BasicShadowMap,
     } as const;
-    renderer.shadowMap.type = shadowLookup[config.shadows.type] ?? THREE.PCFSoftShadowMap;
+    const shadowType = (config.shadows.type ?? 'pcfsoft') as keyof typeof shadowLookup;
+    renderer.shadowMap.type = shadowLookup[shadowType] ?? THREE.PCFSoftShadowMap;
   }
 }
 
