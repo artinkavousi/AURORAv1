@@ -49,4 +49,3 @@ export function toStringOption(value: unknown, fallback: string): string {
   }
   return fallback;
 }
-

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
-import { AppHost } from './src/core/AppHost';
+import { createAuroraRuntime } from './src/core/runtime';
 
 THREE.ColorManagement.enabled = true;
 
@@ -55,12 +55,12 @@ async function run() {
   }
   container.appendChild(renderer.domElement);
 
-  const app = new AppHost(renderer);
-  await app.init(updateLoadingProgressBar);
+  const runtime = createAuroraRuntime(renderer);
+  await runtime.init(updateLoadingProgressBar);
 
   const resize = () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
-    app.resize(window.innerWidth, window.innerHeight);
+    runtime.resize(window.innerWidth, window.innerHeight);
   };
   window.addEventListener('resize', resize);
   resize();
@@ -78,7 +78,7 @@ async function run() {
   const animate = async () => {
     const delta = clock.getDelta();
     const elapsed = clock.getElapsedTime();
-    await app.update(delta, elapsed);
+    await runtime.update(delta, elapsed);
     requestAnimationFrame(animate);
   };
   requestAnimationFrame(animate);

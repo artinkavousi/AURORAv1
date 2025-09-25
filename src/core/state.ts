@@ -92,6 +92,6 @@ export class ConfigStore<TConfig extends object> {
 
 export type AuroraConfigStore = ConfigStore<AuroraConfig>;
 
-export function createConfigStore(base: AuroraConfig): AuroraConfigStore {
+export function createAuroraState(base: AuroraConfig): AuroraConfigStore {
   return new ConfigStore(base);
 }

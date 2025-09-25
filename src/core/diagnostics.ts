@@ -1,6 +1,6 @@
-import type { AuroraConfigStore } from './ConfigStore';
+import type { AuroraConfigStore } from './state';
 import type { FrameContext } from './types';
-import type { EventHub } from './EventHub';
+import type { EventHub } from './events';
 import type { AuroraEvents } from './types';
 import type { AuroraConfigState } from './config';
 
