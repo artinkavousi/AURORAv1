@@ -1,10 +1,18 @@
 import * as THREE from 'three';
 import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import StageBackground from './stage/StageBackground';
-import StageLights from './stage/StageLights';
+import { MeshPhysicalNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu';
+import { Fn, texture, uv, positionWorld, vec3, float } from 'three/tsl';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
 import hdri from '../assets/autumn_field_puresky_1k.hdr';
-import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
+import boxObj from '../assets/boxSlightlySmooth.obj';
+import normalMapFile from '../assets/concrete_0016_normal_opengl_1k.png';
+import aoMapFile from '../assets/concrete_0016_ao_1k.jpg';
+import colorMapFile from '../assets/concrete_0016_color_1k.jpg';
+import roughnessMapFile from '../assets/concrete_0016_roughness_1k.jpg';
+import type { FeatureModule, ModuleContext } from '../core/plugins';
 import type { FrameContext, ResizeContext, StageContext } from '../core/types';
 import type { AuroraConfigState } from '../core/config';
 
@@ -61,9 +69,10 @@ function applyRenderer(renderer: WebGPURenderer, config: StageSnapshot['renderer
   }
   if (renderer.shadowMap) {
     renderer.shadowMap.enabled = config.shadows.enabled;
+    const pcss = (Reflect.get(THREE, 'PCSSShadowMap') as THREE.ShadowMapType | undefined) ?? THREE.PCFSoftShadowMap;
     const shadowLookup = {
       pcfsoft: THREE.PCFSoftShadowMap,
-      pcss: (THREE as unknown as { PCSSShadowMap?: THREE.ShadowMapType }).PCSSShadowMap ?? THREE.PCFSoftShadowMap,
+      pcss,
       basic: THREE.BasicShadowMap,
     } as const;
     const shadowType = (config.shadows.type ?? 'pcfsoft') as keyof typeof shadowLookup;
@@ -97,7 +106,173 @@ function toColorTuple(color: AuroraConfigState['stage']['glass']['attenuationCol
   return { r: color[0], g: color[1], b: color[2] };
 }
 
-export default class StageModule implements FeatureModule {
+class StageBackground {
+  object: THREE.Object3D | null = null;
+  glass: THREE.Mesh<THREE.BufferGeometry, MeshPhysicalNodeMaterial> | null = null;
+  glassCube: THREE.Mesh<THREE.BufferGeometry, MeshPhysicalNodeMaterial> | null = null;
+  floor: THREE.Mesh<THREE.BufferGeometry, MeshStandardNodeMaterial> | null = null;
+
+  async init(): Promise<void> {
+    const glassMat = new MeshPhysicalNodeMaterial({
+      roughness: 0.02,
+      transmission: 1.0,
+      thickness: 0.3,
+      metalness: 0.0,
+      ior: 1.5,
+    });
+
+    const dispersionColor = Fn(() => {
+      const d = float(0.25);
+      return vec3(float(1.0), float(1.0).sub(d.mul(0.35)), float(1.0).sub(d.mul(0.7)));
+    })();
+
+    glassMat.colorNode = dispersionColor;
+
+    const radius = 0.72;
+    const dShell = new THREE.DodecahedronGeometry(radius, 0);
+    this.glass = new THREE.Mesh(dShell, glassMat);
+    this.glass.castShadow = true;
+    this.glass.receiveShadow = true;
+    this.glass.position.set(0, 0.4, 0.22);
+
+    const cShell = new THREE.BoxGeometry(radius * 1.15, radius * 1.15, radius * 1.15);
+    this.glassCube = new THREE.Mesh(cShell, glassMat);
+    this.glassCube.castShadow = true;
+    this.glassCube.receiveShadow = true;
+    this.glassCube.position.copy(this.glass.position);
+    this.glassCube.visible = false;
+
+    const objectRaw = new OBJLoader().parse(boxObj);
+    const sourceMesh = objectRaw.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+    const geometry = BufferGeometryUtils.mergeVertices(sourceMesh.geometry) as THREE.BufferGeometry;
+    const uvArray = geometry.attributes.uv?.array;
+    if (uvArray instanceof Float32Array) {
+      for (let i = 0; i < uvArray.length; i += 1) {
+        uvArray[i] *= 10;
+      }
+    }
+
+    const [normalMap, aoMap, map, roughnessMap] = await Promise.all([
+      this.loadTexture(normalMapFile),
+      this.loadTexture(aoMapFile),
+      this.loadTexture(colorMapFile),
+      this.loadTexture(roughnessMapFile),
+    ]);
+
+    const floorMat = new MeshStandardNodeMaterial({
+      roughness: 0.9,
+      metalness: 0.0,
+      normalScale: new THREE.Vector2(1.0, 1.0),
+      normalMap,
+      aoMap,
+      map,
+      roughnessMap,
+    });
+
+    floorMat.aoNode = Fn(() => texture(aoMap, uv()).mul(positionWorld.z.div(0.4).mul(0.95).oneMinus()))();
+    floorMat.colorNode = Fn(() => texture(map, uv()).mul(positionWorld.z.div(0.4).mul(0.5).oneMinus().mul(0.7)))();
+
+    this.floor = new THREE.Mesh(geometry, floorMat);
+    this.floor.rotation.set(0, Math.PI, 0);
+    this.floor.position.set(0, -0.05, 0.22);
+    this.floor.castShadow = true;
+    this.floor.receiveShadow = true;
+
+    this.object = new THREE.Object3D();
+    this.object.add(this.floor);
+    this.object.add(this.glass);
+    this.object.add(this.glassCube);
+  }
+
+  setGlassParams(params: {
+    ior?: number;
+    thickness?: number;
+    roughness?: number;
+    dispersion?: number;
+    attenuationDistance?: number;
+    attenuationColor?: { r: number; g: number; b: number };
+  }): void {
+    const mat = this.glass?.material as MeshPhysicalNodeMaterial & {
+      dispersion?: number;
+      attenuationColor?: THREE.Color;
+      attenuationDistance?: number;
+    } | null;
+    if (!mat) return;
+
+    if (typeof params.ior === 'number') mat.ior = params.ior;
+    if (typeof params.thickness === 'number') mat.thickness = params.thickness;
+    if (typeof params.roughness === 'number') mat.roughness = params.roughness;
+    mat.transmission = 1.0;
+    if (typeof params.dispersion === 'number' && 'dispersion' in mat) {
+      mat.dispersion = params.dispersion;
+    }
+    if (typeof params.attenuationDistance === 'number') {
+      mat.attenuationDistance = params.attenuationDistance;
+    }
+    if (params.attenuationColor) {
+      mat.attenuationColor = new THREE.Color(
+        params.attenuationColor.r / 255,
+        params.attenuationColor.g / 255,
+        params.attenuationColor.b / 255,
+      );
+    }
+  }
+
+  setShape(shape: 'dodeca' | 'cube' | 'sphere'): void {
+    const isDodeca = shape === 'dodeca';
+    if (this.glass) this.glass.visible = isDodeca;
+    if (this.glassCube) this.glassCube.visible = !isDodeca;
+    if (this.floor) this.floor.visible = !isDodeca;
+  }
+
+  private async loadTexture(file: string): Promise<THREE.Texture> {
+    const loader = new THREE.TextureLoader();
+    return new Promise((resolve, reject) => {
+      loader.load(
+        file,
+        (texture) => {
+          texture.wrapS = THREE.RepeatWrapping;
+          texture.wrapT = THREE.RepeatWrapping;
+          resolve(texture);
+        },
+        undefined,
+        (error) => reject(error),
+      );
+    });
+  }
+}
+
+class StageLights {
+  object: THREE.Object3D;
+  private spot: THREE.SpotLight;
+  private target: THREE.Object3D;
+
+  constructor() {
+    this.object = new THREE.Object3D();
+    this.spot = new THREE.SpotLight(0xffffff, 5, 15, Math.PI * 0.18, 1, 0);
+    this.target = new THREE.Object3D();
+
+    this.spot.position.set(0, 1.2, -0.8);
+    this.target.position.set(0, 0.7, 0);
+
+    this.spot.target = this.target;
+    this.object.add(this.spot);
+    this.object.add(this.target);
+
+    this.spot.castShadow = true;
+    this.spot.shadow.mapSize.width = 1024;
+    this.spot.shadow.mapSize.height = 1024;
+    this.spot.shadow.bias = -0.005;
+    this.spot.shadow.camera.near = 0.5;
+    this.spot.shadow.camera.far = 5;
+  }
+
+  update(): void {
+    // Hook reserved for future dynamic cues
+  }
+}
+
+class StageFeature implements FeatureModule {
   id = 'stage';
 
   private camera: THREE.PerspectiveCamera | null = null;
@@ -310,4 +485,8 @@ export default class StageModule implements FeatureModule {
       console.error(error);
     }
   }
+}
+
+export function createStageDomain(): FeatureModule {
+  return new StageFeature();
 }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
+import type { FeatureModule, ModuleContext } from '../core/plugins';
 import type { FrameContext, ResizeContext, StageContext, SimulationContext, PostPipelineContext } from '../core/types';
-import { getNumber, toBoolean, toNumber, toStringOption } from '../core/valueAccess';
+import { getNumber, toBoolean, toNumber, toStringOption } from '../core/value';
 
 const SIM_DOMAIN_OFFSET = new THREE.Vector3(32, 32, 32);
 
@@ -21,7 +21,7 @@ function intersectStagePlane(raycaster: THREE.Raycaster, camera: THREE.Camera) {
   return { intersect, planeNormal: normal, planeOrigin: centerWorld };
 }
 
-export default class CameraModule implements FeatureModule {
+class CameraFeature implements FeatureModule {
   id = 'camera';
 
   private stage: StageContext | null = null;
@@ -120,10 +120,7 @@ export default class CameraModule implements FeatureModule {
 
     const camSpace = hit.intersect.clone().applyMatrix4(camera.matrixWorldInverse);
     const viewDist = Math.abs(camSpace.z);
-    const smoothing = toNumber(
-      state.lensFocusSmoothing ?? state.focusSmooth ?? state.focusSmoothing,
-      0.2,
-    );
+    const smoothing = toNumber(state.lensFocusSmoothing ?? state.focusSmooth ?? state.focusSmoothing, 0.2);
     const focusEnabled =
       toBoolean(state.lensFxEnabled ?? state.cameraFxEnabled ?? state.dofEnabled, true) &&
       toBoolean(state.postFxEnabled, true);
@@ -170,10 +167,7 @@ export default class CameraModule implements FeatureModule {
     if (cameraFxActive && this.post?.pipeline) {
       const camSpace = hit.intersect.clone().applyMatrix4(camera.matrixWorldInverse);
       const viewDist = Math.abs(camSpace.z);
-      const smoothing = toNumber(
-        state.lensFocusSmoothing ?? state.focusSmooth ?? state.focusSmoothing,
-        0.2,
-      );
+      const smoothing = toNumber(state.lensFocusSmoothing ?? state.focusSmooth ?? state.focusSmoothing, 0.2);
       this.post.pipeline.pointerFocus(viewDist, smoothing);
     }
   }
@@ -184,4 +178,8 @@ export default class CameraModule implements FeatureModule {
     }
     return this.baseRoll ?? 0;
   }
+}
+
+export function createCameraDomain(): FeatureModule {
+  return new CameraFeature();
 }

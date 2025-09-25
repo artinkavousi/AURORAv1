@@ -10,7 +10,6 @@ class Conf {
     maxParticles = 8192 * 16;
     particles = 8192 * 4;
 
-    postFxEnabled = true;
     fxView = 'final';
 
     // Lens FX defaults

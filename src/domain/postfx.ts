@@ -1,10 +1,10 @@
-import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
+import type { FeatureModule, ModuleContext } from '../core/plugins';
 import type { FrameContext, ResizeContext, PostPipelineContext, StageContext } from '../core/types';
 import type { AuroraConfigState } from '../core/config';
-import { createPostFxSnapshot } from '../core/config/postAdapter';
+import { createPostFxSnapshot } from '../core/config';
 import CinematicPipeline from '../post/CinematicPipeline';
 
-export default class PostFxModule implements FeatureModule {
+class PostFxFeature implements FeatureModule {
   id = 'postfx';
 
   private pipeline: CinematicPipeline | null = null;
@@ -48,4 +48,8 @@ export default class PostFxModule implements FeatureModule {
     this.pipeline = null;
     context.registry.revoke('postfx');
   }
+}
+
+export function createPostFxDomain(): FeatureModule {
+  return new PostFxFeature();
 }

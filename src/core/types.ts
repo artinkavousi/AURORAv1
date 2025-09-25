@@ -34,8 +34,21 @@ export interface PostPipelineContext {
 }
 
 export interface AudioRuntimeContext {
-  router: import('../audio/router').default;
-  engine?: import('../audio/audioEngine').default;
+  router: {
+    apply?: (features: unknown, conf: Record<string, unknown>, elapsed: number, envBase: EnvironmentBase) => void;
+    setMasterInfluence?: (value: number) => void;
+    setIntensity?: (value: number) => void;
+    setReactivity?: (value: number) => void;
+  };
+  engine?: {
+    update: () => unknown;
+    connectMic?: () => Promise<void>;
+    connectFile?: (buffer: ArrayBuffer) => Promise<void>;
+    setSmoothing?: (attack: number, release: number) => void;
+    setFeatureSmoothing?: (map: Record<string, { attack: number; release: number }>) => void;
+    setTransientSensitivity?: (value: number) => void;
+    setTransientDecay?: (value: number) => void;
+  };
   panel?: import('../ui/audioPanel').default;
 }
 

@@ -11,7 +11,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@core': path.resolve(rootDir, 'src/core'),
-      '@modules': path.resolve(rootDir, 'src/modules'),
+      '@modules': path.resolve(rootDir, 'src/domain'),
       '@presets': path.resolve(rootDir, 'src/presets'),
     },
   },

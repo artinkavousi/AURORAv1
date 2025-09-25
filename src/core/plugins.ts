@@ -1,16 +1,16 @@
 import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
-import type { ConfigStore } from './ConfigStore';
-import type { AuroraConfig, AuroraEvents, FrameContext, ResizeContext } from './types';
-import type { EventHub } from './EventHub';
-import type { AssetPipeline } from './AssetPipeline';
-import type { Diagnostics } from './Diagnostics';
+import type { AuroraConfigStore } from './state';
+import type { AuroraEvents, FrameContext, ResizeContext } from './types';
+import type { EventHub } from './events';
+import type { AssetPipeline } from './runtime';
+import type { Diagnostics } from './diagnostics';
 
 export interface ModuleContext {
   renderer: WebGPURenderer;
-  config: ConfigStore<AuroraConfig>;
+  config: AuroraConfigStore;
   events: EventHub<AuroraEvents>;
   assets: AssetPipeline;
-  registry: ModuleRegistry;
+  registry: ServiceRegistry;
   diagnostics: Diagnostics;
 }
 
@@ -22,7 +22,7 @@ export interface FeatureModule {
   dispose?(context: ModuleContext): void;
 }
 
-export class ModuleRegistry {
+export class ServiceRegistry {
   private readonly services = new Map<string, unknown>();
 
   constructor(private readonly modules: FeatureModule[]) {}
