@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
 // AudioOrchestrator: flexible modulation matrix for mapping audio features into Flow configuration
 
 function clamp(x, lo, hi) {

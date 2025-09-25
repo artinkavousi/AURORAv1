@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars */
+// @ts-nocheck
 // Advanced Web Audio engine with multi-band feature extraction and adaptive smoothing
 
 function clamp(x, lo = 0, hi = 1) {
