@@ -1,5 +1,5 @@
 import type * as THREE from 'three';
-import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
+import type { FeatureModule, ModuleContext } from '../core/plugins';
 import type { FrameContext, StageContext, SimulationContext } from '../core/types';
 import MlsMpmSimulator from '../mls-mpm/mlsMpmSimulator';
 import ParticleRenderer from '../mls-mpm/particleRenderer';
@@ -12,7 +12,7 @@ interface SimulationServices extends SimulationContext {
   glyphs: GlyphRenderer;
 }
 
-export default class PhysicsModule implements FeatureModule {
+class PhysicsFeature implements FeatureModule {
   id = 'physics';
 
   private services: SimulationServices | null = null;
@@ -76,4 +76,8 @@ export default class PhysicsModule implements FeatureModule {
     context.registry.revoke('simulation');
     this.services = null;
   }
+}
+
+export function createPhysicsDomain(): FeatureModule {
+  return new PhysicsFeature();
 }

@@ -31,7 +31,7 @@ const DEFAULT_SENSOR_ASPECT = 36 / 24;
 const MM_TO_M = 0.001;
 
 /**
- * @typedef {import('../core/config/postAdapter').PostFxConfigSnapshot} PostFxConfigSnapshot
+ * @typedef {import('../core/config').PostFxConfigSnapshot} PostFxConfigSnapshot
  * @typedef {{ fov?: number }} PostStageOverrides
  */
 

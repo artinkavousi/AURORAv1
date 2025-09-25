@@ -1,10 +1,18 @@
+import * as THREE from 'three';
 import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import Info from '../info';
-import { createConfigStore, type AuroraConfigStore } from './ConfigStore';
-import { EventHub } from './EventHub';
-import { AssetPipeline } from './AssetPipeline';
-import { Diagnostics } from './Diagnostics';
-import { ModuleRegistry, type FeatureModule, type ModuleContext } from './ModuleRegistry';
+import { createStageDomain } from '../domain/stage';
+import { createPhysicsDomain } from '../domain/physics';
+import { createMaterialsDomain } from '../domain/materials';
+import { createPostFxDomain } from '../domain/postfx';
+import { createAudioDomain } from '../domain/audio';
+import { createCameraDomain } from '../domain/camera';
+import { createAuroraState, type AuroraConfigStore } from './state';
+import { EventHub } from './events';
+import { Diagnostics } from './diagnostics';
+import { ServiceRegistry, type FeatureModule, type ModuleContext } from './plugins';
 import type {
   AuroraEvents,
   FrameContext,
@@ -13,24 +21,94 @@ import type {
   StageContext,
   AudioRuntimeContext,
 } from './types';
-import { toBoolean } from './valueAccess';
-import { createAuroraConfig } from './config';
-import StageModule from '../modules/StageModule';
-import MaterialModule from '../modules/MaterialModule';
-import PhysicsModule from '../modules/PhysicsModule';
-import PostFxModule from '../modules/PostFxModule';
-import AudioModule from '../modules/AudioModule';
-import CameraModule from '../modules/CameraModule';
+import { toBoolean } from './value';
+import { createAuroraConfig, type AuroraConfigState } from './config';
+
+export class AssetPipeline {
+  private readonly hdrCache = new Map<string, Promise<THREE.DataTexture>>();
+
+  async loadHdrTexture(url: string): Promise<THREE.DataTexture> {
+    if (!this.hdrCache.has(url)) {
+      const promise = new Promise<THREE.DataTexture>((resolve, reject) => {
+        new HDRLoader().load(
+          url,
+          (texture: THREE.DataTexture) => {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            resolve(texture);
+          },
+          undefined,
+          (error: unknown) => reject(error),
+        );
+      });
+      this.hdrCache.set(url, promise);
+    }
+    return this.hdrCache.get(url) as Promise<THREE.DataTexture>;
+  }
+
+  async loadMeshFromFile(file: File, material: THREE.Material | THREE.Material[]): Promise<THREE.Mesh | null> {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (ext === 'obj') {
+      const text = await file.text();
+      const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
+      const obj = new OBJLoader().parse(text);
+      const source = obj.children.find((child: THREE.Object3D): child is THREE.Mesh => {
+        return (child as THREE.Mesh).isMesh === true;
+      });
+      if (!source) return null;
+      const geometry = BufferGeometryUtils.mergeVertices(source.geometry) as THREE.BufferGeometry;
+      return new THREE.Mesh(geometry, material);
+    }
+
+    if (ext === 'gltf' || ext === 'glb') {
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+      const loader = new GLTFLoader();
+      const arrayBuffer = await file.arrayBuffer();
+      const gltf = await new Promise<import('three/examples/jsm/loaders/GLTFLoader.js').GLTF>((resolve, reject) =>
+        loader.parse(arrayBuffer, '', resolve, reject),
+      );
+      const mesh = gltf.scene.getObjectByProperty('type', 'Mesh') as THREE.Mesh | undefined;
+      if (!mesh) return null;
+      return new THREE.Mesh(mesh.geometry, material);
+    }
+
+    if (ext === 'ply') {
+      const { PLYLoader } = await import('three/examples/jsm/loaders/PLYLoader.js');
+      const loader = new PLYLoader();
+      const arrayBuffer = await file.arrayBuffer();
+      const geometry = loader.parse(arrayBuffer);
+      geometry.computeVertexNormals();
+      const merged = BufferGeometryUtils.mergeVertices(geometry as unknown as THREE.BufferGeometry);
+      return new THREE.Mesh(merged, material);
+    }
+
+    if (ext === 'stl') {
+      const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js');
+      const loader = new STLLoader();
+      const arrayBuffer = await file.arrayBuffer();
+      const geometry = loader.parse(arrayBuffer);
+      geometry.computeVertexNormals();
+      const merged = BufferGeometryUtils.mergeVertices(geometry as unknown as THREE.BufferGeometry);
+      return new THREE.Mesh(merged, material);
+    }
+
+    return null;
+  }
+}
 
 export type ProgressCallback = (value: number, delay?: number) => Promise<void> | void;
 
-export class AppHost {
+export interface AuroraRuntimeOptions {
+  modules?: FeatureModule[];
+  initialConfig?: AuroraConfigState;
+}
+
+export class AuroraRuntime {
   private readonly configStore: AuroraConfigStore;
   private readonly events: EventHub<AuroraEvents>;
   private readonly assets: AssetPipeline;
   private readonly diagnostics: Diagnostics;
   private readonly modules: FeatureModule[];
-  private readonly registry: ModuleRegistry;
+  private readonly registry: ServiceRegistry;
   private readonly context: ModuleContext;
   private info: Info | null = null;
   private readonly teardown: Array<() => void> = [];
@@ -38,20 +116,22 @@ export class AppHost {
   private infoLastUpdate = 0;
   private fpsSample = 0;
 
-  constructor(private readonly renderer: WebGPURenderer, modules?: FeatureModule[]) {
-    this.configStore = createConfigStore(createAuroraConfig());
+  constructor(private readonly renderer: WebGPURenderer, options: AuroraRuntimeOptions = {}) {
+    const config = options.initialConfig ?? createAuroraConfig();
+    this.configStore = createAuroraState(config);
     this.events = new EventHub<AuroraEvents>();
     this.assets = new AssetPipeline();
     this.diagnostics = new Diagnostics(this.events);
-    this.modules = modules ?? [
-      new StageModule(),
-      new PhysicsModule(),
-      new MaterialModule(),
-      new PostFxModule(),
-      new AudioModule(),
-      new CameraModule(),
-    ];
-    this.registry = new ModuleRegistry(this.modules);
+    this.modules =
+      options.modules ?? [
+        createStageDomain(),
+        createPhysicsDomain(),
+        createMaterialsDomain(),
+        createPostFxDomain(),
+        createAudioDomain(),
+        createCameraDomain(),
+      ];
+    this.registry = new ServiceRegistry(this.modules);
     this.context = {
       renderer: this.renderer,
       config: this.configStore,
@@ -64,6 +144,10 @@ export class AppHost {
 
   get config(): AuroraConfigStore {
     return this.configStore;
+  }
+
+  get eventHub(): EventHub<AuroraEvents> {
+    return this.events;
   }
 
   async init(progress?: ProgressCallback): Promise<void> {
@@ -199,4 +283,8 @@ export class AppHost {
     this.infoLastUpdate = elapsed;
     this.infoDirty = false;
   }
+}
+
+export function createAuroraRuntime(renderer: WebGPURenderer, options?: AuroraRuntimeOptions): AuroraRuntime {
+  return new AuroraRuntime(renderer, options);
 }

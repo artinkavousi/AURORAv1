@@ -7,3 +7,6 @@
 2025-09-25: Drafted modular refactor plan outlining config migration and follow-on workstreams.
 2025-09-25: Rewired post FX pipeline to consume structured config snapshots and emit stage FOV overrides.
 2025-09-25: Folded legacy JS helpers into module-scoped TypeScript files and refreshed modular rollout roadmap.
+
+2025-09-26: Logged TI consolidation plan mapping runtime/domain merges into docs/TI_CONSOLIDATION_PLAN.md.
+2025-09-26: Consolidated runtime + domain modules under core/runtime.ts and src/domain/*.ts with examples.

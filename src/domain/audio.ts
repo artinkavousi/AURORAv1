@@ -1,0 +1,1141 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+// @ts-nocheck
+
+import type { FeatureModule, ModuleContext } from '../core/plugins';
+import type { FrameContext, EnvironmentBase, AudioRuntimeContext } from '../core/types';
+import { getNumber, toBoolean } from '../core/value';
+import AudioPanel from '../ui/audioPanel';
+
+
+function clampValue(x, lo = 0, hi = 1) {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+const BAND_DEFS = [
+  { name: 'sub', lo: 20, hi: 60 },
+  { name: 'bass', lo: 60, hi: 160 },
+  { name: 'lowMid', lo: 160, hi: 320 },
+  { name: 'mid', lo: 320, hi: 800 },
+  { name: 'hiMid', lo: 800, hi: 2000 },
+  { name: 'presence', lo: 2000, hi: 4000 },
+  { name: 'brilliance', lo: 4000, hi: 8000 },
+  { name: 'air', lo: 8000, hi: 16000 },
+];
+
+const DEFAULT_ENV = { attack: 0.5, release: 0.2 };
+
+const LOG_DB_MIN = -90;
+const LOG_DB_MAX = 6;
+
+class AudioEngine {
+  constructor() {
+    this.ctx = null;
+    this.analyserWide = null;
+    this.analyserFast = null;
+    this.source = null;
+    this.sourceKind = null; // 'mic' | 'file'
+
+    this.freqWide = null;
+    this.freqFast = null;
+    this.timeWide = null;
+    this.timeFast = null;
+    this._magWide = null;
+    this._magFast = null;
+    this._prevMagWide = null;
+    this._prevMagFast = null;
+
+    this.monitorGain = null;
+    this.monitorEnabled = false;
+    this.monitorLevel = 0.0;
+    this.inputGain = 1.0;
+
+    this._lastUpdate = 0;
+    this._beatState = { thr: 0.0, avg: 0.0, last: 0, hold: 0.12 };
+    this._fluxWindow = new Float32Array(96);
+    this._fluxIdx = 0;
+    this._fluxCount = 0;
+    this._thrMethod = 'median';
+    this._thrK = 1.8;
+
+    this._agcAmount = 0.0;
+    this._agcLevel = 0.2;
+    this._gateLevel = 0.003;
+    this._gateHold = 0.2;
+    this._gateTimer = 0;
+
+    this._tempoEnabled = false;
+    this._tempoBpm = 0;
+    this._tempoPhase01 = 0;
+    this._tempoConf = 0;
+    this._barPhase01 = 0;
+    this._swing = 0;
+    this._lastBeatAt = 0;
+    this._beatParity = 0;
+    this._beatEvenInterval = 0;
+    this._beatOddInterval = 0;
+    this._fluxHist = new Float32Array(384);
+    this._fluxHistIdx = 0;
+    this._fluxHistCount = 0;
+
+    this._envCfgMap = {
+      level: { ...DEFAULT_ENV },
+      beat: { attack: 0.7, release: 0.25 },
+      bass: { ...DEFAULT_ENV },
+      mid: { ...DEFAULT_ENV },
+      treble: { ...DEFAULT_ENV },
+    };
+    BAND_DEFS.forEach((band) => {
+      this._envCfgMap[band.name] = { attack: 0.55, release: 0.22 };
+      this._envCfgMap[`transient:${band.name}`] = { attack: 0.8, release: 0.35 };
+    });
+
+    this._env = {};
+    this._bandPrev = {};
+
+    this._transientCfg = { sensitivity: 1.0, decay: 0.4 };
+
+    this._loudness = -40;
+    this._loudnessSlow = -45;
+
+    this._macro = { state: 'idle', strength: 0, last: 'idle' };
+
+    this._filterBank = null;
+
+    this._features = {
+      level: 0,
+      bass: 0,
+      mid: 0,
+      treble: 0,
+      centroid: 0,
+      flux: 0,
+      beat: 0,
+      beatPulse: 0,
+      tempoBpm: 0,
+      tempoPhase01: 0,
+      tempoConf: 0,
+      barPhase01: 0,
+      swing: 0,
+      fluxBass: 0,
+      fluxMid: 0,
+      fluxTreble: 0,
+      bands: {},
+      bandArray: new Float32Array(BAND_DEFS.length),
+      transient: 0,
+      transientBands: {},
+      loudness: 0,
+      loudnessTrend: 0,
+      macroState: 'idle',
+      macroStrength: 0,
+      macroWeights: { impact: 0, lift: 0, fall: 0, sustain: 0 },
+    };
+  }
+
+  async ensureContext() {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (!this.analyserWide) {
+      this.analyserWide = this.ctx.createAnalyser();
+      this.analyserWide.fftSize = 2048;
+      this.analyserWide.smoothingTimeConstant = 0.6;
+      this._allocateWideBuffers();
+    }
+    if (!this.analyserFast) {
+      this.analyserFast = this.ctx.createAnalyser();
+      this.analyserFast.fftSize = 512;
+      this.analyserFast.smoothingTimeConstant = 0.3;
+      this._allocateFastBuffers();
+    }
+    if (!this.monitorGain) {
+      this.monitorGain = this.ctx.createGain();
+      this.monitorGain.gain.value = this.monitorLevel;
+    }
+    if (!this._filterBank) {
+      this._buildFilterBank();
+    }
+  }
+
+  _allocateWideBuffers() {
+    const a = this.analyserWide;
+    if (!a) return;
+    this.freqWide = new Float32Array(a.frequencyBinCount);
+    this.timeWide = new Float32Array(a.fftSize);
+    this._magWide = new Float32Array(a.frequencyBinCount);
+    this._prevMagWide = new Float32Array(a.frequencyBinCount);
+    this._filterBank = null; // rebuild with new fft size
+    BAND_DEFS.forEach((band) => { this._bandPrev[band.name] = 0; });
+  }
+
+  _allocateFastBuffers() {
+    const a = this.analyserFast;
+    if (!a) return;
+    this.freqFast = new Float32Array(a.frequencyBinCount);
+    this.timeFast = new Float32Array(a.fftSize);
+    this._magFast = new Float32Array(a.frequencyBinCount);
+    this._prevMagFast = new Float32Array(a.frequencyBinCount);
+  }
+
+  _buildFilterBank() {
+    if (!this.analyserWide || !this.ctx) return;
+    const sampleRate = this.ctx.sampleRate || 48000;
+    const hzPerBin = sampleRate / this.analyserWide.fftSize;
+    const bank = BAND_DEFS.map((band) => {
+      const lo = Math.max(0, Math.floor(band.lo / hzPerBin));
+      const hi = Math.max(lo, Math.min(this.analyserWide.frequencyBinCount - 1, Math.ceil(band.hi / hzPerBin)));
+      return { name: band.name, lo, hi, width: Math.max(1, hi - lo + 1) };
+    });
+    this._filterBank = bank;
+  }
+
+  async connectMic() {
+    await this.ensureContext();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 2,
+      },
+      video: false,
+    });
+    const src = this.ctx.createMediaStreamSource(stream);
+    this.sourceKind = 'mic';
+    this._connectSource(src);
+  }
+
+  async connectFile(arrayBuffer) {
+    await this.ensureContext();
+    const buf = await this.ctx.decodeAudioData(arrayBuffer.slice(0));
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    this.sourceKind = 'file';
+    this._connectSource(src);
+    src.start();
+  }
+
+  _connectSource(src) {
+    if (!this.ctx) return;
+    if (this.source) {
+      try { this.source.disconnect(); } catch (_) { /* noop */ }
+    }
+    this.source = src;
+    if (this.analyserWide) src.connect(this.analyserWide);
+    if (this.analyserFast) src.connect(this.analyserFast);
+
+    try { this.monitorGain?.disconnect(); } catch (_) { /* noop */ }
+    if (this.sourceKind === 'file') {
+      src.connect(this.ctx.destination);
+    } else if (this.sourceKind === 'mic') {
+      if (this.monitorEnabled && this.monitorGain) {
+        this.monitorGain.gain.value = this.monitorLevel;
+        src.connect(this.monitorGain);
+        this.monitorGain.connect(this.ctx.destination);
+      }
+    }
+  }
+
+  setInputGain(v = 1.0) { this.inputGain = clampValue(v, 0.05, 4.0); }
+  setMonitorEnabled(v = false) { this.monitorEnabled = !!v; }
+  setMonitorLevel(v = 0.0) { this.monitorLevel = clampValue(v, 0.0, 1.0); if (this.monitorGain) this.monitorGain.gain.value = this.monitorLevel; }
+
+  setSmoothing(attack = 0.5, release = 0.2) {
+    this._envCfgMap.level = { attack: clampValue(attack, 0.01, 0.99), release: clampValue(release, 0.01, 0.99) };
+  }
+
+  setFeatureSmoothing(map) {
+    if (!map) return;
+    Object.entries(map).forEach(([key, cfg]) => {
+      if (!cfg) return;
+      const entry = this._envCfgMap[key] || { ...DEFAULT_ENV };
+      if (cfg.attack !== undefined) entry.attack = clampValue(cfg.attack, 0.01, 0.99);
+      if (cfg.release !== undefined) entry.release = clampValue(cfg.release, 0.01, 0.99);
+      this._envCfgMap[key] = entry;
+    });
+  }
+
+  setTransientSensitivity(v = 1.0) { this._transientCfg.sensitivity = clampValue(v, 0.2, 4.0); }
+  setTransientDecay(v = 0.4) { this._transientCfg.decay = clampValue(v, 0.05, 1.5); }
+
+  setFluxThreshold({ method = 'median', k = 1.8 } = {}) {
+    if (method === 'avg' || method === 'median') this._thrMethod = method;
+    this._thrK = clampValue(k, 0.5, 4.0);
+  }
+
+  setAgc(amount = 0.0) { this._agcAmount = clampValue(amount, 0.0, 1.0); }
+  setGate(level = 0.003, hold = 0.2) {
+    this._gateLevel = Math.max(0, level);
+    this._gateHold = Math.max(0.05, hold);
+  }
+  enableTempo(v = true) { this._tempoEnabled = !!v; }
+
+  setFftSize(size = 2048) {
+    if (!this.analyserWide) return;
+    const allowed = [1024, 2048, 4096];
+    const nearest = allowed.reduce((prev, cur) => Math.abs(cur - size) < Math.abs(prev - size) ? cur : prev, allowed[0]);
+    this.analyserWide.fftSize = nearest;
+    this.analyserWide.smoothingTimeConstant = nearest >= 4096 ? 0.7 : 0.6;
+    this._allocateWideBuffers();
+    if (this.analyserFast) {
+      const fastSize = nearest >= 4096 ? 1024 : 512;
+      this.analyserFast.fftSize = fastSize;
+      this.analyserFast.smoothingTimeConstant = fastSize === 1024 ? 0.35 : 0.3;
+      this._allocateFastBuffers();
+    }
+    this._buildFilterBank();
+  }
+
+  _applyEnvelope(key, value) {
+    const cfg = this._envCfgMap[key] || DEFAULT_ENV;
+    const cur = this._env[key] ?? 0;
+    const target = value;
+    const k = target > cur ? (cfg.attack ?? DEFAULT_ENV.attack) : (cfg.release ?? DEFAULT_ENV.release);
+    const next = cur + (target - cur) * clampValue(k, 0.0, 1.0);
+    this._env[key] = next;
+    return next;
+  }
+
+  update() {
+    if (!this.analyserWide || !this.analyserFast) return this._features;
+
+    const now = (performance.now() || 0) / 1000;
+    const dt = this._lastUpdate ? Math.max(0.001, now - this._lastUpdate) : 1 / 60;
+    this._lastUpdate = now;
+
+    this.analyserWide.getFloatTimeDomainData(this.timeWide);
+    this.analyserFast.getFloatTimeDomainData(this.timeFast);
+
+    // RMS level
+    let sum = 0;
+    for (let i = 0; i < this.timeWide.length; i++) {
+      const s = this.timeWide[i] * this.inputGain;
+      sum += s * s;
+    }
+    let level = Math.sqrt(sum / this.timeWide.length);
+
+    if (level < this._gateLevel) {
+      this._gateTimer += dt;
+      if (this._gateTimer > this._gateHold) level = 0;
+    } else {
+      this._gateTimer = 0;
+    }
+
+    // Adaptive gain control over slow window
+    const agcAlpha = 1 - Math.exp(-dt * 2.0);
+    this._agcLevel = (1 - agcAlpha) * this._agcLevel + agcAlpha * level;
+    if (this._agcAmount > 0) {
+      const target = 0.32;
+      const gain = target / Math.max(1e-5, this._agcLevel);
+      const mixGain = 1 + (gain - 1) * this._agcAmount;
+      level = clampValue(level * mixGain, 0, 2);
+    }
+
+    this.analyserWide.getFloatFrequencyData(this.freqWide);
+    this.analyserFast.getFloatFrequencyData(this.freqFast);
+
+    const magWide = this._magWide;
+    const magFast = this._magFast;
+    for (let i = 0; i < magWide.length; i++) {
+      const lin = Math.pow(10, this.freqWide[i] / 20) * this.inputGain;
+      magWide[i] = isFinite(lin) ? lin : 0;
+    }
+    for (let i = 0; i < magFast.length; i++) {
+      const lin = Math.pow(10, this.freqFast[i] / 20) * this.inputGain;
+      magFast[i] = isFinite(lin) ? lin : 0;
+    }
+
+    if (!this._filterBank) this._buildFilterBank();
+    const bands = {};
+    const bandArray = this._features.bandArray;
+    let centroidNum = 0;
+    let centroidDen = 0;
+
+    const totalBins = magWide.length;
+    const nyquist = (this.ctx?.sampleRate || 48000) * 0.5;
+    for (let i = 0; i < totalBins; i++) {
+      centroidNum += i * magWide[i];
+      centroidDen += magWide[i];
+    }
+    const centroid = centroidDen > 0 ? (centroidNum / centroidDen) / totalBins : 0;
+
+    const bandFluxAccum = {};
+    const bandTransient = {};
+
+    this._filterBank.forEach((entry, idx) => {
+      let sumBand = 0;
+      let fluxBand = 0;
+      for (let i = entry.lo; i <= entry.hi; i++) {
+        const val = magWide[i];
+        sumBand += val;
+        const diff = val - this._prevMagWide[i];
+        if (diff > 0) fluxBand += diff;
+        this._prevMagWide[i] = val;
+      }
+      const avgBand = sumBand / entry.width;
+      const prev = this._bandPrev[entry.name] || 0;
+      this._bandPrev[entry.name] = avgBand;
+      const flux = fluxBand / Math.max(1, entry.width);
+      bandFluxAccum[entry.name] = flux;
+      const transientRaw = Math.max(0, avgBand - prev) * this._transientCfg.sensitivity;
+      bandTransient[entry.name] = transientRaw;
+      const envVal = this._applyEnvelope(entry.name, clampValue(avgBand * 1.2, 0, 1));
+      bands[entry.name] = envVal;
+      bandArray[idx] = envVal;
+      const transientEnv = this._applyEnvelope(`transient:${entry.name}`, clampValue(transientRaw, 0, 1));
+      this._features.transientBands[entry.name] = transientEnv;
+    });
+
+    // Aggregate bass/mid/treble using new band data
+    const bass = bands.bass ?? 0;
+    const mid = ( (bands.lowMid ?? 0) + (bands.mid ?? 0) + (bands.hiMid ?? 0) ) / 3;
+    const treble = ( (bands.presence ?? 0) + (bands.brilliance ?? 0) + (bands.air ?? 0) ) / 3;
+
+    // Flux totals
+    let fluxTotal = 0;
+    let fluxBass = 0;
+    let fluxMid = 0;
+    let fluxTreble = 0;
+    Object.entries(bandFluxAccum).forEach(([name, val]) => {
+      fluxTotal += val;
+      if (name === 'sub' || name === 'bass') fluxBass += val;
+      else if (name === 'lowMid' || name === 'mid' || name === 'hiMid') fluxMid += val;
+      else fluxTreble += val;
+    });
+
+    // Beat detection using adaptive threshold
+    this._fluxWindow[this._fluxIdx] = fluxTotal;
+    this._fluxIdx = (this._fluxIdx + 1) % this._fluxWindow.length;
+    this._fluxCount = Math.min(this._fluxWindow.length, this._fluxCount + 1);
+    let thr = 0;
+    if (this._thrMethod === 'median' && this._fluxCount > 12) {
+      const tmp = Array.from(this._fluxWindow.slice(0, this._fluxCount));
+      tmp.sort((a, b) => a - b);
+      const m = tmp[Math.floor(tmp.length * 0.5)];
+      thr = m * this._thrK;
+    } else {
+      const alpha = 1 - Math.exp(-dt * 4.0);
+      this._beatState.avg = (1 - alpha) * this._beatState.avg + alpha * fluxTotal;
+      thr = this._beatState.avg * this._thrK;
+    }
+    this._beatState.thr = thr;
+
+    let beat = 0;
+    if (fluxTotal > thr && this._gateTimer < this._gateHold) {
+      if (now - this._beatState.last > this._beatState.hold) {
+        beat = 1;
+        const interval = now - this._beatState.last;
+        if (this._beatState.last > 0 && interval < 1.5) {
+          if (this._beatParity === 0) this._beatEvenInterval = interval; else this._beatOddInterval = interval;
+          this._beatParity = (this._beatParity + 1) % 2;
+          if (this._beatEvenInterval && this._beatOddInterval) {
+            const avg = (this._beatEvenInterval + this._beatOddInterval) * 0.5;
+            if (avg > 0) {
+              const diff = this._beatOddInterval - this._beatEvenInterval;
+              this._swing = clampValue(diff / (avg * 2), -0.45, 0.45);
+            }
+          }
+        }
+        this._beatState.last = now;
+        this._lastBeatAt = now;
+      }
+    }
+
+    const beatEnv = this._applyEnvelope('beat', beat ? 1 : 0);
+    const beatPulse = beat ? 1 : this._features.beatPulse * Math.exp(-dt / 0.25);
+
+    // Macro classification
+    const levelEnv = this._applyEnvelope('level', clampValue(level * 1.6, 0, 1));
+    const dLevel = (levelEnv - (this._prevLevelEnv ?? levelEnv)) / Math.max(dt, 0.001);
+    this._prevLevelEnv = levelEnv;
+
+    let macroCandidate = 'sustain';
+    let macroStrength = clampValue(levelEnv, 0, 1);
+    if (beat) {
+      macroCandidate = 'impact';
+      macroStrength = 1;
+    } else if (dLevel > 0.6) {
+      macroCandidate = 'lift';
+      macroStrength = clampValue(dLevel * 0.6, 0, 1);
+    } else if (dLevel < -0.5) {
+      macroCandidate = 'fall';
+      macroStrength = clampValue(-dLevel * 0.6, 0, 1);
+    }
+    if (macroCandidate !== this._macro.state) {
+      this._macro.state = macroCandidate;
+      this._macro.last = macroCandidate;
+    }
+    this._macro.strength = this._macro.strength * (1 - Math.exp(-dt * 4)) + macroStrength * Math.exp(-dt * 4);
+
+    const macroWeights = {
+      impact: macroCandidate === 'impact' ? this._macro.strength : 0,
+      lift: macroCandidate === 'lift' ? this._macro.strength : 0,
+      fall: macroCandidate === 'fall' ? this._macro.strength : 0,
+      sustain: macroCandidate === 'sustain' ? this._macro.strength : clampValue(levelEnv, 0, 1),
+    };
+
+    // Loudness (LUFS-ish)
+    const loudnessDb = 20 * Math.log10(Math.max(1e-6, level));
+    const loudAlpha = 1 - Math.exp(-dt * 0.7);
+    this._loudness = (1 - loudAlpha) * this._loudness + loudAlpha * loudnessDb;
+    const loudSlowAlpha = 1 - Math.exp(-dt * 0.2);
+    this._loudnessSlow = (1 - loudSlowAlpha) * this._loudnessSlow + loudSlowAlpha * this._loudness;
+    const loudNorm = clampValue((this._loudness + 60) / 50, 0, 1);
+    const loudTrend = clampValue((this._loudness - this._loudnessSlow) / 12, -1, 1);
+
+    // Tempo estimation
+    if (this._tempoEnabled) {
+      this._fluxHist[this._fluxHistIdx] = fluxTotal;
+      this._fluxHistIdx = (this._fluxHistIdx + 1) % this._fluxHist.length;
+      this._fluxHistCount = Math.min(this._fluxHist.length, this._fluxHistCount + 1);
+      if (this._fluxHistCount > 90) {
+        const len = this._fluxHistCount;
+        const buf = new Float32Array(len);
+        for (let i = 0; i < len; i++) buf[i] = this._fluxHist[(this._fluxHistIdx + i) % this._fluxHist.length];
+        let mean = 0;
+        for (let i = 0; i < len; i++) mean += buf[i];
+        mean /= len;
+        for (let i = 0; i < len; i++) buf[i] -= mean;
+        let bestLag = 0;
+        let bestVal = -Infinity;
+        const fps = 1 / dt;
+        const bpmMin = 70;
+        const bpmMax = 190;
+        const lagMin = Math.max(1, Math.floor((fps * 60) / bpmMax));
+        const lagMax = Math.max(lagMin + 1, Math.floor((fps * 60) / bpmMin));
+        for (let lag = lagMin; lag <= lagMax; lag++) {
+          let acc = 0;
+          for (let i = 0; i < len - lag; i++) acc += buf[i] * buf[i + lag];
+          const bpm = 60 * fps / lag;
+          const weight = 1 - Math.min(1, Math.abs(bpm - 120) / 160);
+          const val = acc * (0.6 + 0.4 * weight);
+          if (val > bestVal) { bestVal = val; bestLag = lag; }
+        }
+        const bpm = clampValue(60 * fps / Math.max(1, bestLag), bpmMin, bpmMax);
+        if (bestLag > 0) {
+          this._tempoBpm = this._tempoBpm ? (this._tempoBpm * 0.9 + bpm * 0.1) : bpm;
+          this._tempoConf = clampValue(bestVal / (len * 0.75 + 1e-6), 0, 1);
+        }
+        this._tempoPhase01 = (this._tempoPhase01 + dt * this._tempoBpm / 60) % 1;
+        this._barPhase01 = (this._barPhase01 + dt * this._tempoBpm / 60 / 4) % 1;
+      }
+    } else {
+      this._tempoBpm = 0;
+      this._tempoPhase01 = 0;
+      this._tempoConf = 0;
+      this._barPhase01 = 0;
+    }
+
+    const transientAvg = Object.values(this._features.transientBands).reduce((a, b) => a + b, 0) / Math.max(1, Object.keys(this._features.transientBands).length);
+
+    this._features.level = levelEnv;
+    this._features.bass = this._applyEnvelope('bass', clampValue(bass, 0, 1));
+    this._features.mid = this._applyEnvelope('mid', clampValue(mid, 0, 1));
+    this._features.treble = this._applyEnvelope('treble', clampValue(treble, 0, 1));
+    this._features.centroid = clampValue(centroid, 0, 1);
+    this._features.flux = fluxTotal;
+    this._features.beat = beatEnv;
+    this._features.beatPulse = beatPulse;
+    this._features.tempoBpm = this._tempoBpm;
+    this._features.tempoPhase01 = this._tempoPhase01;
+    this._features.tempoConf = this._tempoConf;
+    this._features.barPhase01 = this._barPhase01;
+    this._features.swing = this._swing;
+    this._features.fluxBass = fluxBass;
+    this._features.fluxMid = fluxMid;
+    this._features.fluxTreble = fluxTreble;
+    this._features.bands = bands;
+    this._features.transient = clampValue(transientAvg, 0, 1);
+    this._features.loudness = loudNorm;
+    this._features.loudnessTrend = loudTrend;
+    this._features.macroState = macroCandidate;
+    this._features.macroStrength = this._macro.strength;
+    this._features.macroWeights = macroWeights;
+
+    return this._features;
+  }
+
+  features() { return this._features; }
+}
+
+
+
+function deepClone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+const DEFAULT_MATRIX = () => ({
+  masterInfluence: 1.0,
+  targets: {
+    jetStrength: {
+      enable: true,
+      basePath: 'jetStrength',
+      baseWeight: 0.75,
+      clamp: [0, 4.0],
+      applyMaster: true,
+      routes: [
+        { id: 'bassEnergy', source: 'band:bass', gain: 1.1, curve: 1.25, mode: 'continuous' },
+        { id: 'impactPulse', source: 'macro:impact', gain: 0.65, mode: 'pulse', decay: 0.35 },
+      ],
+    },
+    vortexStrength: {
+      enable: true,
+      basePath: 'vortexStrength',
+      baseWeight: 0.78,
+      clamp: [0, 4.0],
+      applyMaster: true,
+      routes: [
+        { id: 'midEnergy', source: 'band:mid', gain: 1.0, curve: 1.1, mode: 'continuous' },
+        { id: 'liftMacro', source: 'macro:lift', gain: 0.55, mode: 'continuous', curve: 1.0 },
+      ],
+    },
+    curlStrength: {
+      enable: true,
+      basePath: 'curlStrength',
+      baseWeight: 0.8,
+      clamp: [0, 3.0],
+      applyMaster: true,
+      routes: [
+        { id: 'trebleEnergy', source: 'band:presence', gain: 1.2, curve: 1.2, mode: 'continuous' },
+        { id: 'transientHigh', source: 'transient:presence', gain: 0.8, mode: 'pulse', decay: 0.25 },
+      ],
+    },
+    orbitStrength: {
+      enable: true,
+      basePath: 'orbitStrength',
+      baseWeight: 0.82,
+      clamp: [0, 3.0],
+      applyMaster: true,
+      routes: [
+        { id: 'midFlow', source: 'band:lowMid', gain: 0.9, curve: 1.1, mode: 'continuous' },
+        { id: 'barLift', source: 'barRise', gain: 0.45, mode: 'continuous' },
+      ],
+    },
+    waveAmplitude: {
+      enable: true,
+      basePath: 'waveAmplitude',
+      baseWeight: 0.7,
+      clamp: [0, 2.0],
+      applyMaster: true,
+      routes: [
+        { id: 'beatPulse', source: 'beatPulse', gain: 1.0, curve: 1.0, mode: 'continuous' },
+        { id: 'macroLift', source: 'macro:lift', gain: 0.6, mode: 'continuous', curve: 1.0 },
+      ],
+    },
+    dynamicViscosity: {
+      enable: true,
+      basePath: 'dynamicViscosity',
+      baseWeight: 1.0,
+      clamp: [0.02, 0.6],
+      applyMaster: false,
+      routes: [
+        { id: 'quietBoost', source: 'loudnessInverse', gain: 0.08, mode: 'continuous', curve: 1.0 },
+        { id: 'fallMacro', source: 'macro:fall', gain: 0.1, mode: 'continuous' },
+      ],
+    },
+    noise: {
+      enable: true,
+      basePath: 'noise',
+      baseWeight: 0.85,
+      clamp: [0, 2.0],
+      applyMaster: true,
+      routes: [
+        { id: 'treble', source: 'band:brilliance', gain: 0.6, curve: 1.2, mode: 'continuous' },
+        { id: 'transient', source: 'transient', gain: 0.5, mode: 'pulse', decay: 0.22 },
+      ],
+    },
+    colorSaturation: {
+      enable: true,
+      basePath: 'colorSaturation',
+      baseWeight: 0.6,
+      clamp: [0, 2.0],
+      applyMaster: false,
+      routes: [
+        { id: 'level', source: 'level', gain: 0.5, curve: 1.1, mode: 'continuous' },
+        { id: 'loudTrend', source: 'loudnessTrendPositive', gain: 0.35, mode: 'continuous' },
+      ],
+    },
+    bloomStrength: {
+      enable: true,
+      basePath: 'bloomStrength',
+      baseWeight: 0.8,
+      clamp: [0.2, 2.5],
+      applyMaster: false,
+      routes: [
+        { id: 'impact', source: 'macro:impact', gain: 0.4, mode: 'pulse', decay: 0.28 },
+        { id: 'beat', source: 'beatPulse', gain: 0.25, mode: 'continuous' },
+      ],
+    },
+    dofBias: {
+      enable: true,
+      baseValue: 0,
+      clamp: [-0.2, 0.2],
+      applyMaster: false,
+      routes: [
+        { id: 'barPhase', source: 'barSine', gain: 0.08, mode: 'continuous' },
+        { id: 'macroSustain', source: 'macro:sustain', gain: 0.04, mode: 'continuous' },
+      ],
+    },
+    envSway: {
+      enable: true,
+      baseValue: 0,
+      clamp: [-0.25, 0.25],
+      applyMaster: false,
+      routes: [
+        { id: 'levelSway', source: 'level', gain: 0.05, mode: 'continuous', curve: 1.2 },
+        { id: 'swing', source: 'swing', gain: 0.12, mode: 'continuous' },
+      ],
+    },
+  },
+});
+
+class AudioRouter {
+  constructor() {
+    this.enabled = true;
+    this.master = 1.0;
+    this.intensity = 1.0;
+    this.reactivity = 1.0;
+    this.maxInfluence = 1.0;
+
+    const def = DEFAULT_MATRIX();
+    this._matrix = def.targets;
+    this.masterInfluence = def.masterInfluence;
+
+    this._legacyRoutes = {};
+    this._routeState = {};
+    this._lastTime = null;
+  }
+
+  setEnabled(v) { this.enabled = !!v; }
+  setMaster(v) { this.master = clamp(v ?? 1.0, 0, 2.5); }
+  setIntensity(v) { this.intensity = clamp(v ?? 1.0, 0.2, 2.0); }
+  setReactivity(v) { this.reactivity = clamp(v ?? 1.0, 0.5, 2.5); }
+  setMasterInfluence(v) { this.masterInfluence = clamp(v ?? 1.0, 0, 2.0); }
+
+  setMatrix(matrix) {
+    if (!matrix) return;
+    Object.entries(matrix).forEach(([key, entry]) => {
+      if (!this._matrix[key]) this._matrix[key] = { enable: true, routes: [] };
+      this._matrix[key] = deepClone(entry);
+    });
+  }
+
+  getMatrix() {
+    return deepClone(this._matrix);
+  }
+
+  setRoutes(routes) {
+    if (!routes) return;
+    this._legacyRoutes = deepClone(routes);
+    Object.entries(routes).forEach(([key, cfg]) => {
+      const target = this._matrix[key];
+      if (!target) return;
+      if (cfg.enable !== undefined) target.enable = !!cfg.enable;
+      const primary = target.routes?.[0];
+      if (primary) {
+        if (cfg.source) primary.source = cfg.source;
+        if (cfg.gain !== undefined) primary.gain = cfg.gain;
+        if (cfg.curve !== undefined) primary.curve = cfg.curve;
+      }
+      if (cfg.beatBoost !== undefined) {
+        const pulse = target.routes?.find((r) => r.id?.includes('impact') || r.mode === 'pulse');
+        if (pulse) pulse.gain = cfg.beatBoost;
+      }
+    });
+  }
+
+  getRoutes() {
+    const out = {};
+    Object.entries(this._matrix).forEach(([key, entry]) => {
+      const primary = entry.routes?.[0];
+      out[key] = {
+        enable: entry.enable,
+        source: primary?.source ?? 'level',
+        gain: primary?.gain ?? 1,
+        curve: primary?.curve ?? 1,
+        beatBoost: entry.routes?.find((r) => r.mode === 'pulse')?.gain ?? 0,
+      };
+    });
+    return deepClone(out);
+  }
+
+  toJSON() {
+    return {
+      enabled: this.enabled,
+      master: this.master,
+      intensity: this.intensity,
+      reactivity: this.reactivity,
+      masterInfluence: this.masterInfluence,
+      matrix: this.getMatrix(),
+      routes: this.getRoutes(),
+    };
+  }
+
+  fromJSON(data) {
+    if (!data) return;
+    if (typeof data.enabled === 'boolean') this.enabled = data.enabled;
+    if (typeof data.master === 'number') this.master = data.master;
+    if (typeof data.intensity === 'number') this.intensity = data.intensity;
+    if (typeof data.reactivity === 'number') this.reactivity = data.reactivity;
+    if (typeof data.masterInfluence === 'number') this.masterInfluence = data.masterInfluence;
+    if (data.matrix) this.setMatrix(data.matrix);
+    else if (data.routes) this.setRoutes(data.routes);
+  }
+
+  _resolveSource(features, source, dt, conf) {
+    if (!source) return 0;
+    switch (source) {
+      case 'level': return clamp(features.level ?? 0, 0, 1);
+      case 'beat': return clamp(features.beat ?? 0, 0, 1);
+      case 'beatPulse': return clamp(features.beatPulse ?? features.beat ?? 0, 0, 1);
+      case 'flux': return clamp(features.flux ?? 0, 0, 5);
+      case 'fluxBass': return clamp(features.fluxBass ?? 0, 0, 4);
+      case 'fluxMid': return clamp(features.fluxMid ?? 0, 0, 4);
+      case 'fluxTreble': return clamp(features.fluxTreble ?? 0, 0, 4);
+      case 'loudness': return clamp(features.loudness ?? 0, 0, 1);
+      case 'loudnessTrend': return clamp((features.loudnessTrend ?? 0) * 0.5 + 0.5, 0, 1);
+      case 'loudnessTrendPositive': return clamp(Math.max(0, features.loudnessTrend ?? 0), 0, 1);
+      case 'loudnessInverse': return clamp(1 - (features.loudness ?? 0), 0, 1);
+      case 'tempoPhase':
+      case 'tempoPhase01': return clamp(features.tempoPhase01 ?? 0, 0, 1);
+      case 'barPhase':
+      case 'barPhase01': return clamp(features.barPhase01 ?? 0, 0, 1);
+      case 'barSine': {
+        const phase = clamp(features.barPhase01 ?? 0, 0, 1);
+        return 0.5 + 0.5 * Math.sin(phase * Math.PI * 2);
+      }
+      case 'barRise': {
+        const phase = clamp(features.barPhase01 ?? 0, 0, 1);
+        return phase;
+      }
+      case 'swing': return clamp((features.swing ?? 0) * 0.5 + 0.5, 0, 1);
+      case 'transient': return clamp(features.transient ?? 0, 0, 1);
+      case 'macroStrength': return clamp(features.macroStrength ?? 0, 0, 1);
+      default: break;
+    }
+
+    if (source.startsWith('macro:')) {
+      const key = source.slice(6);
+      const base = features.macroWeights?.[key] ?? (features.macroState === key ? (features.macroStrength ?? 0) : 0);
+      const gainKey = `audioMacro${key.charAt(0).toUpperCase()}${key.slice(1)}Gain`;
+      const gain = conf && typeof conf[gainKey] === 'number' ? conf[gainKey] : 1.0;
+      return clamp(base * gain, 0, 2);
+    }
+    if (source.startsWith('band:')) {
+      const key = source.slice(5);
+      return clamp(features.bands?.[key] ?? 0, 0, 1);
+    }
+    if (source.startsWith('transient:')) {
+      const key = source.slice(10);
+      return clamp(features.transientBands?.[key] ?? 0, 0, 1);
+    }
+
+    return 0;
+  }
+
+  _shape(value, route) {
+    let v = clamp(value, 0, 1);
+    if (route.shaper === 'smooth') {
+      v = v * v * (3 - 2 * v);
+    } else if (route.shaper === 'sigmoid') {
+      const k = route.k ?? 4;
+      v = 1 / (1 + Math.exp(-k * (v - 0.5)));
+    } else {
+      const curve = clamp(route.curve ?? 1, 0.1, 3.5);
+      v = Math.pow(v, curve * (route.reactivityScale ?? 1));
+    }
+    if (route.offset) v += route.offset;
+    if (route.scale) v *= route.scale;
+    if (route.minSource !== undefined || route.maxSource !== undefined) {
+      v = clamp(v, route.minSource ?? v, route.maxSource ?? v);
+    }
+    return v;
+  }
+
+  apply(features, conf, elapsed = 0, envBase = null) {
+    if (!this.enabled || !features || !conf) return;
+    const now = elapsed;
+    const dt = this._lastTime != null ? Math.max(0.001, now - this._lastTime) : 1 / 60;
+    this._lastTime = now;
+
+    const masterGain = this.master * this.intensity * this.masterInfluence;
+
+    Object.entries(this._matrix).forEach(([targetKey, entry]) => {
+      if (!entry?.enable) return;
+
+      const base = entry.basePath ? (conf[entry.basePath] ?? 0) : (entry.baseValue ?? 0);
+      const baseWeight = entry.baseWeight ?? 0;
+      let value = base * baseWeight;
+
+      if (!this._routeState[targetKey]) this._routeState[targetKey] = {};
+      const state = this._routeState[targetKey];
+
+      (entry.routes || []).forEach((route, idx) => {
+        const key = route.id ?? `r${idx}`;
+        const raw = this._resolveSource(features, route.source, dt, conf);
+        const shaped = this._shape(raw, route);
+        const gain = route.gain ?? 1;
+
+        if (route.mode === 'pulse') {
+          const decay = Math.max(0.05, route.decay ?? 0.3);
+          const prev = state[key] ?? 0;
+          const decayed = prev * Math.exp(-dt / decay);
+          const next = Math.max(decayed, shaped);
+          state[key] = next;
+          value += next * gain;
+        } else {
+          if (route.smoothing) {
+            const smooth = Math.max(0.01, route.smoothing);
+            const prev = state[key] ?? 0;
+            const next = prev + (shaped - prev) * clamp(smooth, 0, 1);
+            state[key] = next;
+            value += next * gain;
+          } else {
+            value += shaped * gain;
+          }
+        }
+      });
+
+      if (entry.applyMaster !== false) value *= masterGain;
+      value *= this.reactivity;
+
+      const [cLo, cHi] = entry.clamp ?? [-Infinity, Infinity];
+      value = clamp(value, cLo, cHi);
+
+      switch (targetKey) {
+        case 'envSway': {
+          if (envBase) {
+            const sway = clamp(value, -0.4, 0.4);
+            conf.bgRotY = envBase.bg + sway;
+            conf.envRotY = envBase.env - sway * 0.85;
+          }
+          break;
+        }
+        case 'dofBias': {
+          conf._audioDofBias = value;
+          break;
+        }
+        default: {
+          if (entry.basePath && entry.basePath in conf) {
+            conf[entry.basePath] = value;
+          }
+          break;
+        }
+      }
+    });
+  }
+}
+
+
+
+
+function clamp(value: number, lo = 0, hi = 1) {
+  return Math.max(lo, Math.min(hi, value));
+}
+
+const AUDIO_BANDS = ['sub', 'bass', 'lowMid', 'mid', 'hiMid', 'presence', 'brilliance', 'air'] as const;
+type AudioBand = (typeof AUDIO_BANDS)[number];
+type AudioFeatures = ReturnType<AudioEngine['update']>;
+type RouterApply = (
+  features: AudioFeatures,
+  conf: Record<string, unknown>,
+  elapsed: number,
+  envBase: EnvironmentBase,
+) => void;
+
+class AudioFeature implements FeatureModule {
+  id = 'audio';
+
+  private engine: AudioEngine | null = null;
+  private router: AudioRouter | null = null;
+  private panel: AudioPanel | null = null;
+  private envBase: EnvironmentBase = { bg: 0, env: 0 };
+  private configSignature: string | null = null;
+  private started = false;
+  private unsubscribeEnv: (() => void) | null = null;
+  private routerRestore: (() => void) | null = null;
+  private audioUploadRestore: (() => void) | null = null;
+
+  async init(context: ModuleContext): Promise<void> {
+    const state = context.config.state;
+    this.engine = new AudioEngine();
+    this.router = new AudioRouter();
+    this.panel = new AudioPanel(this.engine, state, this.router);
+
+    const rawState = state as unknown as Record<string, unknown>;
+    const previousRouter = rawState.__router as AudioRouter | null | undefined;
+    if (typeof state.registerRouter === 'function') {
+      state.registerRouter(this.router);
+      this.routerRestore = () => {
+        rawState.__router = previousRouter ?? null;
+      };
+    }
+    this.panel.init('bottom-left');
+    this.applyAudioConfig(state, true);
+
+    this.registerAudioUpload(context);
+
+    this.unsubscribeEnv = context.events.on('audio.environment-base', (base) => {
+      this.envBase = base;
+    });
+
+    context.registry.provide('audio', { router: this.router, engine: this.engine, panel: this.panel } satisfies AudioRuntimeContext);
+  }
+
+  async update(frame: FrameContext, context: ModuleContext): Promise<void> {
+    if (!this.engine || !this.router) return;
+    const state = context.config.state;
+    if (!state.audioEnabled) {
+      this.resetOutputs(state);
+      return;
+    }
+
+    await this.ensureStarted(state);
+    this.applyAudioConfig(state);
+
+    const features = this.engine.update();
+    const sensitivity = getNumber(state, 'audioSensitivity', 1);
+    const beatBoost = getNumber(state, 'audioBeatBoost', 1);
+    const bassGain = getNumber(state, 'audioBassGain', 1);
+    const midGain = getNumber(state, 'audioMidGain', 1);
+    const trebleGain = getNumber(state, 'audioTrebleGain', 1);
+    state._audioLevel = clamp((features.level ?? 0) * sensitivity);
+    state._audioBeat = clamp((features.beat ?? 0) * beatBoost);
+    state._audioBass = clamp((features.bass ?? 0) * bassGain * sensitivity);
+    state._audioMid = clamp((features.mid ?? 0) * midGain * sensitivity);
+    state._audioTreble = clamp((features.treble ?? 0) * trebleGain * sensitivity);
+    state._audioTempoPhase = features.tempoPhase01 ?? 0;
+    state._audioTempoBpm = features.tempoBpm ?? 0;
+
+    if (this.router?.apply) {
+      const apply = this.router.apply as unknown as RouterApply;
+      apply?.(features, state, frame.elapsed, this.envBase);
+    }
+  }
+
+  dispose(context: ModuleContext): void {
+    this.unsubscribeEnv?.();
+    this.routerRestore?.();
+    this.audioUploadRestore?.();
+    const ctxWrapper = this.engine as { ctx?: { close?: () => Promise<void>; state?: string } } | null;
+    const audioCtx = ctxWrapper?.ctx;
+    if (audioCtx && typeof audioCtx.close === 'function' && audioCtx.state !== 'closed') {
+      void audioCtx.close().catch(() => undefined);
+    }
+    this.panel?.dispose?.();
+    context.registry.revoke('audio');
+    this.panel = null;
+    this.router = null;
+    this.engine = null;
+    this.started = false;
+    this.configSignature = null;
+    this.envBase = { bg: 0, env: 0 };
+    this.unsubscribeEnv = null;
+    this.routerRestore = null;
+    this.audioUploadRestore = null;
+  }
+
+  private async ensureStarted(state: Record<string, unknown>): Promise<void> {
+    if (this.started || !this.engine) return;
+    if (state.audioSource === 'mic') {
+      await this.engine.connectMic();
+    }
+    this.started = true;
+  }
+
+  private applyAudioConfig(state: Record<string, unknown>, force = false): void {
+    if (!this.engine || !this.router) return;
+    const signature = [
+      state.audioAttack,
+      state.audioRelease,
+      state.audioBandAttack,
+      state.audioBandRelease,
+      state.audioTransientSensitivity,
+      state.audioTransientDecay,
+      state.audioMasterInfluence,
+      state.audioIntensity,
+      state.audioReactivity,
+    ]
+      .map((value) => String(value ?? 'null'))
+      .join('|');
+
+    if (!force && signature === this.configSignature) return;
+    this.configSignature = signature;
+
+    const attack = getNumber(state, 'audioAttack', 0.5);
+    const release = getNumber(state, 'audioRelease', 0.2);
+    this.engine.setSmoothing(attack, release);
+    const bandAttack = getNumber(state, 'audioBandAttack', 0.55);
+    const bandRelease = getNumber(state, 'audioBandRelease', 0.22);
+    const smoothing: Record<string, { attack: number; release: number }> = {};
+    AUDIO_BANDS.forEach((band: AudioBand) => {
+      smoothing[band] = { attack: bandAttack, release: bandRelease };
+      smoothing[`transient:${band}`] = {
+        attack: Math.min(0.95, bandAttack + 0.2),
+        release: Math.min(0.95, bandRelease + 0.15),
+      };
+    });
+    this.engine.setFeatureSmoothing(smoothing);
+    this.engine.setTransientSensitivity(getNumber(state, 'audioTransientSensitivity', 1));
+    this.engine.setTransientDecay(getNumber(state, 'audioTransientDecay', 0.4));
+
+    const setMaster = this.router?.setMasterInfluence as ((value: number) => void) | undefined;
+    const setIntensity = this.router?.setIntensity as ((value: number) => void) | undefined;
+    const setReactivity = this.router?.setReactivity as ((value: number) => void) | undefined;
+    setMaster?.(getNumber(state, 'audioMasterInfluence', 1));
+    setIntensity?.(getNumber(state, 'audioIntensity', 1));
+    setReactivity?.(getNumber(state, 'audioReactivity', 1));
+  }
+
+  private resetOutputs(state: Record<string, unknown>): void {
+    state._audioLevel = 0;
+    state._audioBeat = 0;
+    state._audioBass = 0;
+    state._audioMid = 0;
+    state._audioTreble = 0;
+    state._audioTempoPhase = 0;
+    state._audioTempoBpm = 0;
+    state.bgRotY = this.envBase.bg;
+    state.envRotY = this.envBase.env;
+  }
+
+  private registerAudioUpload(context: ModuleContext): void {
+    const state = context.config.state as unknown as Record<string, unknown> & {
+      registerAudioUpload?: (handler: (buffer: ArrayBuffer, file?: File) => void) => void;
+      __onAudioUpload?: (buffer: ArrayBuffer, file?: File) => void;
+    };
+    if (typeof state.registerAudioUpload !== 'function' || !this.engine) {
+      return;
+    }
+
+    const previous = state.__onAudioUpload;
+    const handler = async (buffer: ArrayBuffer, file?: File) => {
+      if (!this.engine) return;
+      try {
+        await this.engine.connectFile(buffer);
+        this.started = true;
+        this.configSignature = null;
+        context.config.batch(() => {
+          state.audioSource = 'file';
+          state.audioEnabled = true;
+          if (file?.name) {
+            (state as Record<string, unknown>)._audioFileName = file.name;
+          }
+        });
+        this.applyAudioConfig(state, true);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    state.registerAudioUpload(handler);
+    this.audioUploadRestore = () => {
+      state.__onAudioUpload = previous;
+    };
+  }
+}
+
+export function createAudioDomain(): FeatureModule {
+  return new AudioFeature();
+}
+
