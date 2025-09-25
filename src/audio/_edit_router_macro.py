@@ -1,5 +1,5 @@
 from pathlib import Path
-path = Path('router.js')
+path = Path('router.ts')
 text = path.read_text()
 old = "    if (source.startsWith('macro:')) {\n      const key = source.slice(6);\n      return clamp(features.macroWeights?.[key] ?? (features.macroState === key ? features.macroStrength ?? 0 : 0), 0, 1);\n    }"
 if old not in text:

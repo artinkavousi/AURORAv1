@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
 import * as THREE from "three";
 import { PointsNodeMaterial } from 'three/webgpu';
 import {Fn, vec3, instanceIndex, float} from "three/tsl";

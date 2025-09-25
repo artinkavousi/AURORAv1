@@ -1,4 +1,4 @@
-import { conf } from '../conf.js';
+import { conf } from '../conf';
 import { pick, clonePreset } from './utils';
 
 const SIM_KEYS = [

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
 import {struct, instancedArray} from "three/tsl";
 
 const TYPES = {

@@ -26,17 +26,17 @@ export interface StageContext {
 }
 
 export interface SimulationContext {
-  simulator: import('../mls-mpm/mlsMpmSimulator.js').default;
+  simulator: import('../mls-mpm/mlsMpmSimulator').default;
 }
 
 export interface PostPipelineContext {
-  pipeline: import('../post/CinematicPipeline.js').default;
+  pipeline: import('../post/CinematicPipeline').default;
 }
 
 export interface AudioRuntimeContext {
-  router: import('../audio/router.js').default;
-  engine?: import('../audio/audioEngine.js').default;
-  panel?: import('../ui/audioPanel.js').default;
+  router: import('../audio/router').default;
+  engine?: import('../audio/audioEngine').default;
+  panel?: import('../ui/audioPanel').default;
 }
 
 export interface AuroraEvents extends Record<string, unknown> {

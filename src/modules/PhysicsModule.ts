@@ -1,10 +1,10 @@
 import type * as THREE from 'three';
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type { FrameContext, StageContext, SimulationContext } from '../core/types';
-import MlsMpmSimulator from '../mls-mpm/mlsMpmSimulator.js';
-import ParticleRenderer from '../mls-mpm/particleRenderer.js';
-import PointRenderer from '../mls-mpm/pointRenderer.js';
-import GlyphRenderer from '../mls-mpm/glyphRenderer.js';
+import MlsMpmSimulator from '../mls-mpm/mlsMpmSimulator';
+import ParticleRenderer from '../mls-mpm/particleRenderer';
+import PointRenderer from '../mls-mpm/pointRenderer';
+import GlyphRenderer from '../mls-mpm/glyphRenderer';
 
 interface SimulationServices extends SimulationContext {
   surface: ParticleRenderer;

@@ -4,3 +4,6 @@
 2025-09-24: Rewired physics module visibility toggles to structured simulation config.
 2025-09-24: Temporarily widened AuroraConfig typing to ease staged migration.
 2025-09-24: Added simulation performance schema, diagnostics rewrite, and lens defaults tuning.
+2025-09-25: Drafted modular refactor plan outlining config migration and follow-on workstreams.
+2025-09-25: Rewired post FX pipeline to consume structured config snapshots and emit stage FOV overrides.
+2025-09-25: Folded legacy JS helpers into module-scoped TypeScript files and refreshed modular rollout roadmap.
