@@ -1,9 +1,9 @@
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type { FrameContext, EnvironmentBase, AudioRuntimeContext } from '../core/types';
 import { getNumber } from '../core/valueAccess';
-import AudioEngine from '../audio/audioEngine.js';
-import AudioRouter from '../audio/router.js';
-import AudioPanel from '../ui/audioPanel.js';
+import AudioEngine from '../audio/audioEngine';
+import AudioRouter from '../audio/router';
+import AudioPanel from '../ui/audioPanel';
 
 const AUDIO_BANDS = ['sub', 'bass', 'lowMid', 'mid', 'hiMid', 'presence', 'brilliance', 'air'] as const;
 

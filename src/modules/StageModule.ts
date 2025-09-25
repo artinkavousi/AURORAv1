@@ -1,28 +1,12 @@
 import * as THREE from 'three';
 import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import BackgroundGeometry from '../backgroundGeometry.js';
-import { Lights } from '../lights.js';
+import StageBackground from './stage/StageBackground';
+import StageLights from './stage/StageLights';
 import hdri from '../assets/autumn_field_puresky_1k.hdr';
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type { FrameContext, ResizeContext, StageContext } from '../core/types';
 import type { AuroraConfigState } from '../core/config';
-
-type StageBackground = BackgroundGeometry & {
-  object: THREE.Object3D | null;
-  glass: THREE.Mesh | null;
-  glassCube: THREE.Mesh | null;
-  floor: THREE.Mesh | null;
-  setGlassParams(params: {
-    ior?: number;
-    thickness?: number;
-    roughness?: number;
-    dispersion?: number;
-    attenuationDistance?: number;
-    attenuationColor?: { r: number; g: number; b: number };
-  }): void;
-  setShape(shape: string): void;
-};
 
 const FOV_EPSILON = 0.001;
 
@@ -120,7 +104,7 @@ export default class StageModule implements FeatureModule {
   private scene: THREE.Scene | null = null;
   private controls: OrbitControls | null = null;
   private background: StageBackground | null = null;
-  private lights: Lights | null = null;
+  private lights: StageLights | null = null;
   private environmentTexture: THREE.DataTexture | null = null;
   private glassSignature: string | null = null;
   private boundarySignature: string | null = null;
@@ -158,7 +142,7 @@ export default class StageModule implements FeatureModule {
     this.scene.background = this.environmentTexture;
     this.scene.environment = this.environmentTexture;
 
-    this.background = new BackgroundGeometry() as StageBackground;
+    this.background = new StageBackground();
     await this.background.init();
     if (this.background.object) {
       this.scene.add(this.background.object);
@@ -168,7 +152,7 @@ export default class StageModule implements FeatureModule {
       registry.provide('stage.environmentTexture', this.environmentTexture);
     }
 
-    this.lights = new Lights();
+    this.lights = new StageLights();
     this.scene.add(this.lights.object);
 
     this.applySnapshot(context, snapshotStageConfig(state));
@@ -197,7 +181,7 @@ export default class StageModule implements FeatureModule {
     this.applySnapshot(context, snapshot);
 
     this.controls?.update(frame.delta);
-    this.lights?.update?.(frame.elapsed);
+    this.lights?.update?.();
 
     const newScale = computeWorldFit(this.camera, this.controls, snapshot.world);
     if (typeof newScale === 'number' && Number.isFinite(newScale)) {

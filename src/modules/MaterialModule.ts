@@ -1,9 +1,9 @@
 import type * as THREE from 'three';
 import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
-import type BackgroundGeometry from '../backgroundGeometry.js';
-import type ParticleRenderer from '../mls-mpm/particleRenderer.js';
-import type PointRenderer from '../mls-mpm/pointRenderer.js';
-import type GlyphRenderer from '../mls-mpm/glyphRenderer.js';
+import type StageBackground from './stage/StageBackground';
+import type ParticleRenderer from '../mls-mpm/particleRenderer';
+import type PointRenderer from '../mls-mpm/pointRenderer';
+import type GlyphRenderer from '../mls-mpm/glyphRenderer';
 
 interface MaterialLibrary {
   [key: string]: THREE.Material | THREE.Material[] | undefined;
@@ -15,7 +15,7 @@ export default class MaterialModule implements FeatureModule {
   private materials: MaterialLibrary = {};
 
   async init(context: ModuleContext): Promise<void> {
-    const background = context.registry.tryResolve<BackgroundGeometry>('stage.background');
+    const background = context.registry.tryResolve<StageBackground>('stage.background');
     const renderers = context.registry.tryResolve<{ surface: ParticleRenderer; points: PointRenderer; glyphs: GlyphRenderer }>(
       'simulation.renderers',
     );

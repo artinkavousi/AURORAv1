@@ -2,7 +2,7 @@ import type { FeatureModule, ModuleContext } from '../core/ModuleRegistry';
 import type { FrameContext, ResizeContext, PostPipelineContext, StageContext } from '../core/types';
 import type { AuroraConfigState } from '../core/config';
 import { createPostFxSnapshot } from '../core/config/postAdapter';
-import CinematicPipeline from '../post/CinematicPipeline.js';
+import CinematicPipeline from '../post/CinematicPipeline';
 
 export default class PostFxModule implements FeatureModule {
   id = 'postfx';
@@ -26,7 +26,7 @@ export default class PostFxModule implements FeatureModule {
     if (!this.pipeline) return;
     const state = context.config.state;
     const snapshot = createPostFxSnapshot(state);
-    const stageOverrides = this.pipeline.updateFromConfig?.(snapshot);
+    const stageOverrides = this.pipeline.updateFromConfig?.(snapshot) as { fov?: number } | null | undefined;
     const nextFov = stageOverrides?.fov;
     if (typeof nextFov === 'number' && Number.isFinite(nextFov)) {
       const stageState = state.stage;

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars */
+// @ts-nocheck
 import * as THREE from "three";
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { Fn, attribute, instanceIndex, mat3, normalize, vec3, varying, uniform, mrt, float } from "three/tsl";

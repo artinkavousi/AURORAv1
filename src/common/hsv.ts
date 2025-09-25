@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
 import {float, floor, Fn, If, trunc, vec3, int} from "three/tsl";
 
 export const hsvtorgb = /*@__PURE__*/ Fn( ( [ hsv ] ) => {

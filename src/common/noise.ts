@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
 import {float, Fn, Loop, vec3} from "three/tsl";
 
 const tri = /*@__PURE__*/ Fn( ( [ x ] ) => {

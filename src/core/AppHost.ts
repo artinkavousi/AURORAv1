@@ -1,5 +1,5 @@
 import type WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
-import { Info } from '../info.js';
+import Info from '../info';
 import { createConfigStore, type AuroraConfigStore } from './ConfigStore';
 import { EventHub } from './EventHub';
 import { AssetPipeline } from './AssetPipeline';
