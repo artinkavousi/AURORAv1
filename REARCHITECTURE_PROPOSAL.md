@@ -153,6 +153,7 @@ Add npm scripts and Node-based CLI utilities:
 - New modules can be added via scaffolding script and integrated without touching unrelated code.
 - Production bundle size and runtime FPS meet or exceed current baselines.
 
+codex/refactor-project-structure-and-scripts-9d95ni
 ## 13. Implementation Snapshot *(Status: Complete)*
 - **Runtime host online** – `index.ts` now instantiates the WebGPU renderer and defers lifecycle orchestration to `src/core/AppHost.ts`,
   which wires the config store, diagnostics, asset loader, and feature modules via the registry.
@@ -165,4 +166,4 @@ Add npm scripts and Node-based CLI utilities:
   the UI overlay through the event hub so operational visibility is built into the new runtime.
 - **Tooling tightened** – The ESLint flat config, TypeScript `tsconfig.json`, and `npm run check/lint/build` scripts enforce
   continuous verification and keep the modular runtime aligned with the proposal’s quality gates.
-
+MODULARv1
